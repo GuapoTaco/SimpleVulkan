@@ -6,7 +6,7 @@
 
 #include <iostream>
 #include <fstream>
-
+#include <thread>
 
 vk::Format format;
 
@@ -129,9 +129,9 @@ int main()
 	
 	// make the command buffer
 	vk::CommandBufferAllocateInfo commandBufferInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1); 
-	auto commandBuffer = device.allocateCommandBuffers(commandBufferInfo)[0];
+	auto initCommandBuffer = device.allocateCommandBuffers(commandBufferInfo)[0];
 	
-	commandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
+	initCommandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
 	
 	// add buffer
 	vk::BufferCreateInfo buffInfo({}, sizeof(float) * 9, vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive, 0, nullptr); // TODO: not sure
@@ -206,43 +206,47 @@ int main()
 	auto fence = device.createFence(fenceInfo, vk::AllocationCallbacks::null());
 	
 	
-	// create the swapchain
-	vk::SurfaceCapabilitiesKHR capabilities;
-	physical_device.getSurfaceCapabilitiesKHR(surface, &capabilities);
-	
+	// create the swapchain	
 	std::vector<vk::SurfaceFormatKHR> formats;
 	physical_device.getSurfaceFormatsKHR(surface, formats);
 	
 	format = formats[0].format();
 	
-	std::cout << "Size: " << capabilities.currentExtent().width() << " x " << capabilities.currentExtent().height()  << std::endl;
-	
 	vk::SwapchainCreateInfoKHR swapchainInfo({}, surface, 2, format,
-											 formats[0].colorSpace(), capabilities.currentExtent(), 1, 
+											 formats[0].colorSpace(), vk::Extent2D(1280, 720), 1, 
 											 vk::ImageUsageFlagBits::eColorAttachment, vk::SharingMode::eExclusive, 0, nullptr, 
 											 vk::SurfaceTransformFlagBitsKHR::eIdentity, vk::CompositeAlphaFlagBitsKHR::eOpaque, 
-											 vk::PresentModeKHR::eFifoKHR, VK_FALSE, {});
+											 vk::PresentModeKHR::eMailboxKHR, VK_FALSE, {});
 
 	
 	auto swapchain = device.createSwapchainKHR(swapchainInfo, vk::AllocationCallbacks::null());
 	
-	
-	
-	
-	
-	
-	
+	// get images
 	std::vector<vk::Image> images;
 	device.getSwapchainImagesKHR(swapchain, images);
 	
-	auto semaphore = create_semaphore(device);
-	
-	auto image_view = create_image_view(device, images[0]);
+	std::cout << images.size() << " Images avaliable" << std::endl;
 	
 	
-	// make framebuffer
-	vk::FramebufferCreateInfo framebufferInfo({}, render_pass, 1, &image_view, 1024, 720, 1);
-	auto framebuffer = device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null()); assert(framebuffer);
+	// make framebuffers
+	std::vector<vk::Framebuffer> framebuffers;
+	std::vector<vk::ImageView> image_views;
+	framebuffers.reserve(images.size());
+	
+	for(auto&& img : images)
+	{
+		image_views.push_back(create_image_view(device, img));
+		
+		
+		// make framebuffer
+		vk::FramebufferCreateInfo framebufferInfo({}, render_pass, 1, &image_views[image_views.size() - 1], 1024, 720, 1);
+		framebuffers.push_back(device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null()));
+		
+	}
+	
+	// get next swap image
+	uint32_t nextSwapImage;
+	device.acquireNextImageKHR(swapchain, UINT64_MAX, {}, {}, nextSwapImage);
 	
 	
 	// make graphics pipeline: HOLY SHIT THAT'S A LOT OF METADATA
@@ -261,56 +265,61 @@ int main()
 	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, nullptr, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, nullptr, nullptr, nullptr, pipeline_layout, render_pass, 0, {}, -1); 
 	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0]; assert(graphics_pipeline);
 	
-	// make the descriptor pool
-	vk::DescriptorPoolSize descPoolSize(vk::DescriptorType::eStorageBuffer, 1);
-	vk::DescriptorPoolCreateInfo descPoolInfo({}, 1, 1, &descPoolSize);
-	auto descriptor_pool = device.createDescriptorPool(descPoolInfo, vk::AllocationCallbacks::null());
 	
-	// make the descriptor set
-	vk::DescriptorSetAllocateInfo descSetAllocInfo(descriptor_pool, 1, &descriptor_set_layout);
-	auto descriptor_set = device.allocateDescriptorSets(descSetAllocInfo)[0];
+	// make image memory barrier
+	vk::ImageMemoryBarrier imageMemoryBarrier({}, vk::AccessFlagBits::eColorAttachmentWrite, vk::ImageLayout::eUndefined, vk::ImageLayout::ePresentSrcKHR, family_queue_index, family_queue_index, images[nextSwapImage], vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1));
+	initCommandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTopOfPipe, {}, {}, {}, {imageMemoryBarrier});
 	
+	initCommandBuffer.end();
 	
+	// submit
+	vk::SubmitInfo submitInfo(0, nullptr, nullptr, 1, &initCommandBuffer, 0, nullptr);
+	device_queue.submit({ submitInfo }, {});
 	
-	// update the descriptor sets
-	vk::DescriptorBufferInfo descBufferInfo(vertex_buffer, 0, sizeof(float) * 9);
-	vk::WriteDescriptorSet writeDescSet(descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &descBufferInfo, nullptr);
+	// wait for completion
+	device_queue.waitIdle();
 	
-
+	// RENDER
 	
-	// RENDER!!!!!
-	while(!glfwWindowShouldClose(window))
+	// make a new command buffer for the render bit 
+	auto renderCommandBuffer = device.allocateCommandBuffers(commandBufferInfo)[0];
+	
+	renderCommandBuffer.begin({});
 	{
-
-		vk::CommandBufferInheritanceInfo inherInfo(render_pass, 0, framebuffer, VK_FALSE, {}, {});
-		vk::CommandBufferBeginInfo beginInfo({}, &inherInfo);
-		commandBuffer.begin(beginInfo);
+		// clear color on the screen
+		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 1.f, 0.f, 0.f, 1.f }}));
 		
-		commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eAllGraphics, vk::PipelineStageFlagBits::eAllGraphics, {}, {}, {}, {});
+		// start the render pass
+		vk::RenderPassBeginInfo renderPassBeginInfo(render_pass, framebuffers[nextSwapImage], vk::Rect2D({0, 0}, { 1024, 720 }), 1, &clearColor);
+		renderCommandBuffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
 		
-		commandBuffer.clearColorImage(images[0], vk::ImageLayout::eColorAttachmentOptimal, vk::ClearColorValue(std::array<float, 4>{{1.f, 0.f, 0.f, 1.f}}), {});
+		// viewport
+		vk::Viewport viewport(0, 0, 1280, 720, 0.f, 1.f);
+		renderCommandBuffer.setViewport(0, {viewport});
 		
-		commandBuffer.end();
+		// set scissor
+		vk::Rect2D scissor({0, 0}, {1280, 720});
+		renderCommandBuffer.setScissor(0, {scissor});
 		
-		auto flags = vk::PipelineStageFlags(vk::PipelineStageFlagBits::eAllGraphics);
-		vk::Fence fence = create_fence(device);
-		device_queue.submit({vk::SubmitInfo(1, &semaphore, &flags, 1, &commandBuffer, 0, nullptr)}, fence);
+		// bind buffer
+		renderCommandBuffer.bindVertexBuffers(0, {vertex_buffer}, { 0 });
 		
-		device.waitForFences({fence}, VK_TRUE, UINT64_MAX);
-		
-		uint32_t currentSwap;
-		device.acquireNextImageKHR(swapchain, UINT64_MAX, semaphore, {}, currentSwap);
-		
-		std::cout << currentSwap << std::endl;
-		
-		vk::Result res;
-		vk::PresentInfoKHR presentInfo(1, &semaphore, 1, &swapchain, &currentSwap, &res);
-		device_queue.presentKHR(presentInfo);
+		// DRAW!!!
+		renderCommandBuffer.draw(3, 1, 0, 0);
 	}
+	renderCommandBuffer.end();
 	
-	device.destroy(nullptr);
-	glfwDestroyWindow(window);
-	inst.destroy(nullptr);
+	// submit render
+	vk::PipelineStageFlags pipeStageFlags = vk::PipelineStageFlagBits::eBottomOfPipe;
+	vk::SubmitInfo renderCommandSubmit(0, nullptr, &pipeStageFlags, 1, &renderCommandBuffer, 0, nullptr);
+	device_queue.submit({submitInfo}, {});
+	
+	// swap buffers
+	vk::Result res;
+	vk::PresentInfoKHR presentInfo(0, nullptr, 1, &swapchain, &nextSwapImage, &res);
+	device_queue.presentKHR(presentInfo);
+	
+	std::this_thread::sleep_for(std::chrono::seconds(10));
 	
 	
 }
