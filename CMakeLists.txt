@@ -24,6 +24,6 @@ add_custom_target(shaders ALL
 
 add_executable(vulkan101 ${SRCS})
 
-target_link_libraries(vulkan101 ${OpenGL_LIBRARIES} glfw3 X11 Xrandr Xxf86vm Xcursor Xinerama vulkan)
+target_link_libraries(vulkan101 ${OpenGL_LIBRARIES} glfw3 X11 Xrandr Xxf86vm Xcursor Xinerama vulkan pthread dl)
 
 target_compile_features(vulkan101 PUBLIC cxx_variable_templates)
