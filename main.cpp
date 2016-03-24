@@ -157,10 +157,32 @@ int main()
 	device.getSwapchainImagesKHR(swapchain, images);
 	
 	auto semaphore = create_semaphore(device);
-	auto fence = create_fence(device);
+	
+	uint32_t currentSwap;
+	device.acquireNextImageKHR(swapchain, UINT64_MAX, semaphore, {}, currentSwap);
 	
 	auto image_view = create_image_view(device, images[0]);
 	
+	auto queue = device.getQueue(0, 0);
+	
+	// make render pass
+	vk::AttachmentDescription attachDesc(vk::AttachmentDescriptionFlags(), format, vk::SampleCountFlagBits::e1, 
+										 vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
+									  vk::AttachmentStoreOp::eDontCare, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+	vk::AttachmentReference attachRef(0, vk::ImageLayout::eColorAttachmentOptimal);
+	vk::SubpassDescription subpassDesc(vk::SubpassDescriptionFlags(), vk::PipelineBindPoint::eGraphics, 0, nullptr, 1, &attachRef, nullptr, nullptr, 0, nullptr);
+	vk::RenderPassCreateInfo renderPassInfo(vk::RenderPassCreateFlags(), 1, &attachDesc, 1, &subpassDesc, 0, nullptr);
+	
+	auto render_pass = device.createRenderPass(renderPassInfo, vk::AllocationCallbacks::null());
+	
+	// make framebuffer
+	vk::FramebufferCreateInfo framebufferInfo(vk::FramebufferCreateFlags(), render_pass, 1, &image_view, 1024, 720, 1);
+	auto framebuffer = device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null());
+	
+	// TODO: make descriptor set
+	
+	// make pipeline
+	vk::GraphicsPipelineCreateInfo graphPiplelineInfo(
 	
 	vk::BufferCreateInfo buffInfo(vk::BufferCreateFlags(), sizeof(float) * 9, 
 								  vk::BufferUsageFlags(vk::BufferUsageFlagBits::eVertexBuffer), vk::SharingMode::eExclusive, 0, nullptr);
