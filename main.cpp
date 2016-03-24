@@ -5,6 +5,7 @@
 #include <vulkan/vk_cpp.h>
 
 #include <iostream>
+#include <fstream>
 
 
 vk::Format format;
@@ -179,35 +180,71 @@ int main()
 	vk::FramebufferCreateInfo framebufferInfo(vk::FramebufferCreateFlags(), render_pass, 1, &image_view, 1024, 720, 1);
 	auto framebuffer = device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null());
 	
-	// TODO: make descriptor set
-	
-	// make pipeline
-	vk::GraphicsPipelineCreateInfo graphPiplelineInfo(
-	
-	vk::BufferCreateInfo buffInfo(vk::BufferCreateFlags(), sizeof(float) * 9, 
-								  vk::BufferUsageFlags(vk::BufferUsageFlagBits::eVertexBuffer), vk::SharingMode::eExclusive, 0, nullptr);
-	vk::Buffer buff = device.createBuffer(buffInfo, vk::AllocationCallbacks::null());
-	
-	
-	vk::MemoryAllocateInfo allocInfo(sizeof(float) * 9, 0); // TODO: look at heap types
-	auto devMemory = device.allocateMemory(allocInfo, vk::AllocationCallbacks::null());
-	
-	// write to the buffer
-	auto mappedMemory = device.mapMemory(devMemory, 0, sizeof(float) * 9, vk::MemoryMapFlags());
-	
-	float triData[] = {
-		-1.f, -1.f, 0.f,
-		 1.f, -1.f, 0.f,
-		 0.f,  1.f, 0.f
+	// make descriptor set layout
+	vk::DescriptorSetLayoutBinding bindings[] = {
+		{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlags(vk::ShaderStageFlagBits::eVertex), nullptr} // vertex position
 	};
+	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 1, bindings);
+	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, vk::AllocationCallbacks::null());
 	
-	mappedMemory = triData;
+	// make pipeline layout
+	vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &descriptor_set_layout, 0, nullptr);
+	auto pipeline_layout = device.createPipelineLayout(pipelineLayoutInfo, vk::AllocationCallbacks::null());
 	
-	device.unmapMemory(devMemory);
+	// upload shaders
+	std::ifstream fragFile("frag.spv", std::ios::binary | std::ios::ate);
+	std::streamsize fragSize = fragFile.tellg();
+	fragFile.seekg(0, std::ios::beg);
+	std::vector<char> fragSpirVData(fragSize);
+	fragFile.read(fragSpirVData.data(), fragSize);
 	
-	// associate the allocated memory with the buffer
-	device.bindBufferMemory(buff, devMemory, 0);
-
+	
+	std::ifstream vertFile("vert.spv", std::ios::binary | std::ios::ate);
+	std::streamsize vertSize = vertFile.tellg();
+	vertFile.seekg(0, std::ios::beg);
+	std::vector<char> vertSpirVData(vertSize);
+	vertFile.read(vertSpirVData.data(), vertSize);
+	
+	vk::ShaderModuleCreateInfo vertModuleInfo({}, vertSize, reinterpret_cast<uint32_t*>(vertSpirVData.data()));
+	vk::ShaderModuleCreateInfo fragModuleInfo({}, fragSize, reinterpret_cast<uint32_t*>(fragSpirVData.data()));
+	
+	auto vert_module = device.createShaderModule(vertModuleInfo, vk::AllocationCallbacks::null());
+	auto frag_module = device.createShaderModule(fragModuleInfo, vk::AllocationCallbacks::null());
+	
+	// viewport
+	auto viewport = vk::Viewport(0, 0, 1024, 720, 0, 100);
+	
+	// make graphics pipeline: HOLY SHIT THAT'S A LOT OF METADATA
+	vk::PipelineShaderStageCreateInfo pipeShaderStageInfo[] = {
+		{{}, vk::ShaderStageFlagBits::eVertex, vert_module, "Vert Shader", nullptr},
+		{{}, vk::ShaderStageFlagBits::eFragment, frag_module, "Frag Shader", nullptr}
+	};
+	vk::VertexInputAttributeDescription vertInputAttrDesc(0, 0, vk::Format::eR32G32B32Sfloat, 0);
+	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 0, nullptr, 1, &vertInputAttrDesc);
+	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, false); // TODO: not sure
+	vk::PipelineTessellationStateCreateInfo pipeTessStateInfo({}, 0);
+	vk::Rect2D scissor({}, vk::Extent2D(1024, 720));
+	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 1, &viewport, 1, &scissor);
+	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, false, false, vk::PolygonMode::eFill, vk::CullModeFlags(vk::CullModeFlagBits::eNone), vk::FrontFace::eClockwise, true, 1.f, 100, 1.f, 1.f);
+	vk::SampleMask sampleMask = 1; // TODO: ???? this is just an int
+	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e16, false, 1.f/2.f, &sampleMask, false, false); // TODO: not sure
+	vk::PipelineDepthStencilStateCreateInfo pipeDepthStencilStateInfo({}, true, true, vk::CompareOp::eLessOrEqual, true, false, vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), 0.f, 100.f); // TODO: not sure
+	vk::PipelineColorBlendStateCreateInfo pipeColorBlendStateInfo({}, false, vk::LogicOp::eAnd, 0, nullptr, {{0.f, 0.f, 1.f, 1.f}}); // TODO: not sure
+	vk::PipelineDynamicStateCreateInfo pipeDynStateInfo({}, 0, nullptr); // TODO: not sure
+	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, &pipeTessStateInfo, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, &pipeDepthStencilStateInfo, &pipeColorBlendStateInfo, &pipeDynStateInfo, pipeline_layout, render_pass, 0, {}, 0);
+	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0];
+	
+	// make the descriptor pool
+	vk::DescriptorPoolSize descPoolSize(vk::DescriptorType::eStorageBuffer, 1);
+	vk::DescriptorPoolCreateInfo descPoolInfo({}, 1, 1, &descPoolSize);
+	auto descriptor_pool = device.createDescriptorPool(descPoolInfo, vk::AllocationCallbacks::null());
+	
+	// make the descriptor set
+	vk::DescriptorSetAllocateInfo descSetAllocInfo(descriptor_pool, 1, &descriptor_set_layout);
+	auto descriptor_set = device.allocateDescriptorSets(descSetAllocInfo)[0];
+	
+	
+	
 	// make a command pool
 	vk::CommandPoolCreateInfo poolInfo(vk::CommandPoolCreateFlags(), 0);
 	auto commandPool = device.createCommandPool(poolInfo, vk::AllocationCallbacks::null());
@@ -217,7 +254,6 @@ int main()
 	auto commandBuffer = device.allocateCommandBuffers(commandBufferInfo);
 	
 	
-	device.destroyBuffer(buff, nullptr);
 	device.destroy(nullptr);
 	glfwDestroyWindow(window);
 	inst.destroy(nullptr);
