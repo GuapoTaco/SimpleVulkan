@@ -12,18 +12,10 @@ vk::Format format;
 
 vk::Instance create_instance()
 {
-	vk::ApplicationInfo appInfo("Test app", 1, "Engine", 1, VK_MAKE_VERSION(1, 0, 0));
+	vk::ApplicationInfo appInfo("Test app", 0, "Engine", 0, VK_MAKE_VERSION(1, 0, 0));
 	
-	vk::InstanceCreateInfo instInfo;
-	
-	instInfo.pApplicationInfo(&appInfo);
-	instInfo.flags(vk::InstanceCreateFlags());
-	instInfo.enabledLayerCount(0);
-	instInfo.ppEnabledLayerNames(nullptr);
-	instInfo.enabledExtensionCount(1);
-	const char* extensionNames[] = { "VK_KHR_xcb_surface" };
-	instInfo.ppEnabledExtensionNames(extensionNames);
-	
+	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_EXT_debug_report", "VK_KHR_surface" };
+	vk::InstanceCreateInfo instInfo({}, &appInfo, 0, nullptr, 3, extensionNames); 
 	
 	return vk::createInstance(instInfo, vk::AllocationCallbacks::null());
 }
@@ -56,56 +48,19 @@ vk::PhysicalDevice get_physical_device(const vk::Instance& inst)
 	
 }
 
-vk::Device create_device(const vk::Instance& inst, const vk::PhysicalDevice& physical_device)
+vk::Device create_device(const vk::PhysicalDevice& physical_device, int family_queue_index)
 {
-	
-
-	auto physDevProps = physical_device.getProperties();
 	auto physDevQueueProps = physical_device.getQueueFamilyProperties();
 	
-	vk::DeviceQueueCreateInfo queueInfo;
-	queueInfo.queueFamilyIndex(0);
-	queueInfo.queueCount(physDevQueueProps[0].queueCount());
-	
 	float queue_priorities[] = {0.0f};
-	queueInfo.pQueuePriorities(queue_priorities);
+	vk::DeviceQueueCreateInfo queueInfo({}, family_queue_index, physDevQueueProps[family_queue_index].queueCount(), queue_priorities);
 	
-	
-	vk::DeviceCreateInfo devInfo;
-	devInfo.queueCreateInfoCount(1);
-	devInfo.pQueueCreateInfos(&queueInfo);
-	devInfo.enabledLayerCount(0);
-	devInfo.ppEnabledLayerNames(nullptr);
-	const char* deviceExtensionNames[1024];
-	devInfo.enabledExtensionCount(0);
-	devInfo.ppEnabledExtensionNames(deviceExtensionNames);
-	devInfo.pEnabledFeatures(nullptr);
+	vk::DeviceCreateInfo devInfo({}, 1, &queueInfo, 0, nullptr, 0, nullptr, nullptr);
 	
 	return physical_device.createDevice(devInfo, vk::AllocationCallbacks::null());
 	
 }
 
-vk::SwapchainKHR create_swapchain(const vk::Device& device, const vk::SurfaceKHR& surface, const vk::PhysicalDevice& physDev)
-{
-	vk::SurfaceCapabilitiesKHR capabilities;
-	physDev.getSurfaceCapabilitiesKHR(surface, &capabilities);
-	
-	std::vector<vk::SurfaceFormatKHR> formats;
-	physDev.getSurfaceFormatsKHR(surface, formats);
-	
-	format = formats[0].format();
-	
-	vk::SwapchainCreateInfoKHR swapchainInfo(vk::SwapchainCreateFlagsKHR(), surface, 2, format,
-											 formats[0].colorSpace(), capabilities.currentExtent(), 1, 
-											 vk::ImageUsageFlags(vk::ImageUsageFlagBits::eColorAttachment), vk::SharingMode::eExclusive, 0, nullptr, 
-											 vk::SurfaceTransformFlagBitsKHR::eIdentity, vk::CompositeAlphaFlagBitsKHR::eOpaque, 
-											 vk::PresentModeKHR::eFifoKHR, true, vk::SwapchainKHR());
-
-	vk::SwapchainKHR ret;
-	device.createSwapchainKHR(&swapchainInfo, nullptr, &ret);
-	
-	return ret;
-}
 
 vk::Semaphore create_semaphore(const vk::Device& device)
 {
@@ -123,8 +78,10 @@ vk::Fence create_fence(const vk::Device& device)
 
 vk::ImageView create_image_view(const vk::Device& device, const vk::Image& image)
 {
-	vk::ImageViewCreateInfo imageViewInfo(vk::ImageViewCreateFlags{}, image, vk::ImageViewType::e2D, format, 
-										  vk::ComponentMapping(), vk::ImageSubresourceRange(vk::ImageAspectFlags(), 0, 1, 0, 1));
+	vk::ImageViewCreateInfo imageViewInfo({}, image, vk::ImageViewType::e2D, format, 
+										  vk::ComponentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG, 
+															   vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA), 
+										  vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 0, 0, 1));
 	
 	return device.createImageView(imageViewInfo, vk::AllocationCallbacks::null());
 }
@@ -150,45 +107,58 @@ int main()
 	auto inst = create_instance(); assert(inst);
 	auto surface = create_surface(inst, window); assert(surface);
 	auto physical_device = get_physical_device(inst); assert(physical_device);
-	auto device = create_device(inst, physical_device); assert(device);
-	auto swapchain = create_swapchain(device, surface, physical_device); assert(swapchain);
 	
-	std::vector<vk::Image> images;
-	device.getSwapchainImagesKHR(swapchain, images);
+	int family_queue_index = 0;
+	auto queueFamilyProps = physical_device.getQueueFamilyProperties();
+	for(size_t i = 0; i < queueFamilyProps.size(); ++i)
+	{
+		if(queueFamilyProps[i].queueFlags() & vk::QueueFlagBits::eGraphics && physical_device.getSurfaceSupportKHR(i, surface))
+		{
+			family_queue_index = i;
+		}
+	}
+	std::cout << "using family queue index " << family_queue_index << std::endl;
 	
-	auto semaphore = create_semaphore(device);
+	auto device = create_device(physical_device, family_queue_index); assert(device);
+	auto device_queue = device.getQueue(family_queue_index, 0); assert(device_queue);
 	
-	uint32_t currentSwap;
-	device.acquireNextImageKHR(swapchain, UINT64_MAX, semaphore, {}, currentSwap);
 	
-	auto image_view = create_image_view(device, images[0]);
+	// make a command pool
+	vk::CommandPoolCreateInfo poolInfo({}, family_queue_index);
+	auto commandPool = device.createCommandPool(poolInfo, vk::AllocationCallbacks::null());
 	
-	auto queue = device.getQueue(0, 0); 
+	// make the command buffer
+	vk::CommandBufferAllocateInfo commandBufferInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1); 
+	auto commandBuffer = device.allocateCommandBuffers(commandBufferInfo)[0];
 	
-	// make render pass
-	vk::AttachmentDescription attachDesc(vk::AttachmentDescriptionFlags(), format, vk::SampleCountFlagBits::e1, 
-										 vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
-									  vk::AttachmentStoreOp::eDontCare, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-	vk::SubpassDescription subpassDesc({}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 0, nullptr, nullptr, nullptr, 0, nullptr);
-	vk::RenderPassCreateInfo renderPassInfo(vk::RenderPassCreateFlags(), 1, &attachDesc, 1, &subpassDesc, 0, nullptr);
+	commandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
 	
-	auto render_pass = device.createRenderPass(renderPassInfo, vk::AllocationCallbacks::null()); assert(render_pass);
+	// add buffer
+	vk::BufferCreateInfo buffInfo({}, sizeof(float) * 9, vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive, 0, nullptr); // TODO: not sure
+	auto vertex_buffer = device.createBuffer(buffInfo, vk::AllocationCallbacks::null());
 	
-	// make framebuffer
-	vk::FramebufferCreateInfo framebufferInfo(vk::FramebufferCreateFlags(), render_pass, 1, &image_view, 1024, 720, 1);
-	auto framebuffer = device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null()); assert(framebuffer);
+	auto mem_reqs = device.getBufferMemoryRequirements(vertex_buffer);
 	
-	// make descriptor set layout
-	vk::DescriptorSetLayoutBinding bindings[] = {
-		{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlags(vk::ShaderStageFlagBits::eVertex), nullptr} // vertex position
+	// allocate for the buffer
+	vk::MemoryAllocateInfo memAllocInfo(mem_reqs.size(), 9); // TODO: better selection of memory type
+	auto device_memory = device.allocateMemory(memAllocInfo, vk::AllocationCallbacks::null());
+	
+	// associate the buffer to the allocated space
+	device.bindBufferMemory(vertex_buffer, device_memory, 0);
+	
+	// write to the buffer
+	auto bufferData = device.mapMemory(device_memory, 0, mem_reqs.size(), {});
+	
+	float triData[] = {
+		-1.f, -1.f, 0.f,
+		 1.f, -1.f, 0.f,
+		 0.f,  1.f, 0.f
 	};
-	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 1, bindings);
-	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, vk::AllocationCallbacks::null()); assert(descriptor_set_layout);
+	memcpy(bufferData, triData, sizeof(triData));
 	
-	// make pipeline layout
-	vk::PushConstantRange ranges(vk::ShaderStageFlags(vk::ShaderStageFlagBits::eVertex), 0, sizeof(float) * 9);
-	vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &descriptor_set_layout, 1, &ranges);
-	auto pipeline_layout = device.createPipelineLayout(pipelineLayoutInfo, vk::AllocationCallbacks::null()); assert(pipeline_layout);
+	device.unmapMemory(device_memory);
+	
+	
 	
 	// upload shaders
 	std::ifstream fragFile("frag.spv", std::ios::binary | std::ios::ate);
@@ -204,31 +174,91 @@ int main()
 	std::vector<char> vertSpirVData(vertSize);
 	vertFile.read(vertSpirVData.data(), vertSize);
 	
-	vk::ShaderModuleCreateInfo vertModuleInfo({}, vertSize, reinterpret_cast<uint32_t*>(vertSpirVData.data()));
-	vk::ShaderModuleCreateInfo fragModuleInfo({}, fragSize, reinterpret_cast<uint32_t*>(fragSpirVData.data()));
+	vk::ShaderModuleCreateInfo vertModuleInfo({}, vertSpirVData.size(), reinterpret_cast<const uint32_t*>(vertSpirVData.data()));
+	vk::ShaderModuleCreateInfo fragModuleInfo({}, fragSpirVData.size(), reinterpret_cast<const uint32_t*>(fragSpirVData.data()));
 	
 	auto vert_module = device.createShaderModule(vertModuleInfo, vk::AllocationCallbacks::null()); assert(vert_module);
 	auto frag_module = device.createShaderModule(fragModuleInfo, vk::AllocationCallbacks::null()); assert(frag_module);
 	
-	// viewport
-	auto viewport = vk::Viewport(0, 0, 1024, 720, 0, 100);
-		
+	
+	// make descriptor set
+	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 0, nullptr);
+	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, vk::AllocationCallbacks::null()); assert(descriptor_set_layout);
+
+	// make pipeline layout
+	vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &descriptor_set_layout, 0, nullptr);
+	auto pipeline_layout = device.createPipelineLayout(pipelineLayoutInfo, vk::AllocationCallbacks::null()); assert(pipeline_layout);
+	
+	// make render pass
+	vk::AttachmentDescription attachDesc({}, vk::Format::eR32G32B32A32Sfloat, vk::SampleCountFlagBits::e1, 
+										 vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
+									  vk::AttachmentStoreOp::eDontCare, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+	vk::AttachmentReference colorAttachments(0, vk::ImageLayout::eColorAttachmentOptimal);
+	vk::AttachmentReference depthRef(VK_ATTACHMENT_UNUSED, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+	vk::SubpassDescription subpassDesc({}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 1, &colorAttachments, nullptr, &depthRef, 0, nullptr);
+	vk::RenderPassCreateInfo renderPassInfo({}, 1, &attachDesc, 1, &subpassDesc, 0, nullptr);
+	
+	auto render_pass = device.createRenderPass(renderPassInfo, vk::AllocationCallbacks::null()); assert(render_pass);
+	
+	
+	// construct a fence for sync
+	vk::FenceCreateInfo fenceInfo(vk::FenceCreateFlags{});
+	auto fence = device.createFence(fenceInfo, vk::AllocationCallbacks::null());
+	
+	
+	// create the swapchain
+	vk::SurfaceCapabilitiesKHR capabilities;
+	physical_device.getSurfaceCapabilitiesKHR(surface, &capabilities);
+	
+	std::vector<vk::SurfaceFormatKHR> formats;
+	physical_device.getSurfaceFormatsKHR(surface, formats);
+	
+	format = formats[0].format();
+	
+	std::cout << "Size: " << capabilities.currentExtent().width() << " x " << capabilities.currentExtent().height()  << std::endl;
+	
+	vk::SwapchainCreateInfoKHR swapchainInfo({}, surface, 2, format,
+											 formats[0].colorSpace(), capabilities.currentExtent(), 1, 
+											 vk::ImageUsageFlagBits::eColorAttachment, vk::SharingMode::eExclusive, 0, nullptr, 
+											 vk::SurfaceTransformFlagBitsKHR::eIdentity, vk::CompositeAlphaFlagBitsKHR::eOpaque, 
+											 vk::PresentModeKHR::eFifoKHR, VK_FALSE, {});
+
+	
+	auto swapchain = device.createSwapchainKHR(swapchainInfo, vk::AllocationCallbacks::null());
+	
+	
+	
+	
+	
+	
+	
+	std::vector<vk::Image> images;
+	device.getSwapchainImagesKHR(swapchain, images);
+	
+	auto semaphore = create_semaphore(device);
+	
+	auto image_view = create_image_view(device, images[0]);
+	
+	
+	// make framebuffer
+	vk::FramebufferCreateInfo framebufferInfo({}, render_pass, 1, &image_view, 1024, 720, 1);
+	auto framebuffer = device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null()); assert(framebuffer);
+	
+	
 	// make graphics pipeline: HOLY SHIT THAT'S A LOT OF METADATA
 	vk::PipelineShaderStageCreateInfo pipeShaderStageInfo[] = {
-		{{}, vk::ShaderStageFlagBits::eVertex, vert_module, "Vert Shader", nullptr},
-		{{}, vk::ShaderStageFlagBits::eFragment, frag_module, "Frag Shader", nullptr}
+		{{}, vk::ShaderStageFlagBits::eVertex, vert_module, "main", nullptr},
+		{{}, vk::ShaderStageFlagBits::eFragment, frag_module, "main", nullptr}
 	}; // GOOD
 	vk::VertexInputAttributeDescription vertInputAttrDesc(0, 0, vk::Format::eR32G32B32Sfloat, 0); // GOOD
 	vk::VertexInputBindingDescription vertInputBindingDesc(0, sizeof(float) * 3, vk::VertexInputRate::eVertex); // GOOD
 	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 1, &vertInputBindingDesc, 1, &vertInputAttrDesc); // GOOD
 	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE); // GOOD
-	vk::PipelineTessellationStateCreateInfo pipeTessStateInfo({}, 1); // GOOD
-	vk::Rect2D scissor({}, vk::Extent2D(1024, 720)); // TODO: not sure
-	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 1, &viewport, 1, &scissor); // GOOD
-	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlags(vk::CullModeFlagBits::eNone), vk::FrontFace::eClockwise, VK_FALSE, 1.f, 100, 1.f, 1.f); // PROBABLY GOOD
-	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e16, VK_FALSE, 1.f/2.f, nullptr, VK_FALSE, VK_FALSE); // GOOD
-	vk::PipelineDepthStencilStateCreateInfo pipeDepthStencilStateInfo({}, VK_FALSE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE, vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), 0.f, 1.f); // GOOD
-	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, &pipeTessStateInfo, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, &pipeDepthStencilStateInfo, nullptr, nullptr, pipeline_layout, render_pass, 0, {}, -1); 
+	//vk::Rect2D scissor({}, vk::Extent2D(1024, 720)); // TODO: not sure
+	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 1, nullptr, 1, nullptr); // GOOD
+	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise, VK_FALSE, 0.f, 0.f, 0.f, 0.f); // PROBABLY GOOD
+	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e1, VK_FALSE, 0.f, nullptr, VK_FALSE, VK_FALSE); // GOOD
+	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, nullptr, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, nullptr, nullptr, nullptr, pipeline_layout, render_pass, 0, {}, -1); 
 	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0]; assert(graphics_pipeline);
 	
 	// make the descriptor pool
@@ -240,43 +270,43 @@ int main()
 	vk::DescriptorSetAllocateInfo descSetAllocInfo(descriptor_pool, 1, &descriptor_set_layout);
 	auto descriptor_set = device.allocateDescriptorSets(descSetAllocInfo)[0];
 	
-	// add buffer
-	vk::BufferCreateInfo buffInfo({}, sizeof(float) * 9, vk::BufferUsageFlags(vk::BufferUsageFlagBits::eVertexBuffer), vk::SharingMode::eExclusive, 0, nullptr); // TODO: not sure
-	auto vertex_buffer = device.createBuffer(buffInfo, vk::AllocationCallbacks::null());
 	
-	// allocate for the buffer
-	vk::MemoryAllocateInfo memAllocInfo(sizeof(float) * 9, 0); // TODO: better selection of memory type
-	auto device_memory = device.allocateMemory(memAllocInfo, vk::AllocationCallbacks::null());
-	
-	// associate the buffer to the allocated space
-	device.bindBufferMemory(vertex_buffer, device_memory, 0);
-	
-	// write to the buffer
-	auto bufferData = device.mapMemory(device_memory, 0, sizeof(float) * 9, {});
-	
-	float triData[] = {
-		-1.f, -1.f, 0.f,
-		 1.f, -1.f, 0.f,
-		 0.f,  1.f, 0.f
-	};
-	bufferData = triData;
-	
-	device.unmapMemory(device_memory);
 	
 	// update the descriptor sets
 	vk::DescriptorBufferInfo descBufferInfo(vertex_buffer, 0, sizeof(float) * 9);
 	vk::WriteDescriptorSet writeDescSet(descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &descBufferInfo, nullptr);
 	
-	// make a command pool
-	vk::CommandPoolCreateInfo poolInfo({}, 0);
-	auto commandPool = device.createCommandPool(poolInfo, vk::AllocationCallbacks::null());
-	
-	// make the command buffer
-	vk::CommandBufferAllocateInfo commandBufferInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1); 
-	auto commandBuffer = device.allocateCommandBuffers(commandBufferInfo);
+
 	
 	// RENDER!!!!!
-	
+	while(!glfwWindowShouldClose(window))
+	{
+
+		vk::CommandBufferInheritanceInfo inherInfo(render_pass, 0, framebuffer, VK_FALSE, {}, {});
+		vk::CommandBufferBeginInfo beginInfo({}, &inherInfo);
+		commandBuffer.begin(beginInfo);
+		
+		commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eAllGraphics, vk::PipelineStageFlagBits::eAllGraphics, {}, {}, {}, {});
+		
+		commandBuffer.clearColorImage(images[0], vk::ImageLayout::eColorAttachmentOptimal, vk::ClearColorValue(std::array<float, 4>{{1.f, 0.f, 0.f, 1.f}}), {});
+		
+		commandBuffer.end();
+		
+		auto flags = vk::PipelineStageFlags(vk::PipelineStageFlagBits::eAllGraphics);
+		vk::Fence fence = create_fence(device);
+		device_queue.submit({vk::SubmitInfo(1, &semaphore, &flags, 1, &commandBuffer, 0, nullptr)}, fence);
+		
+		device.waitForFences({fence}, VK_TRUE, UINT64_MAX);
+		
+		uint32_t currentSwap;
+		device.acquireNextImageKHR(swapchain, UINT64_MAX, semaphore, {}, currentSwap);
+		
+		std::cout << currentSwap << std::endl;
+		
+		vk::Result res;
+		vk::PresentInfoKHR presentInfo(1, &semaphore, 1, &swapchain, &currentSwap, &res);
+		device_queue.presentKHR(presentInfo);
+	}
 	
 	device.destroy(nullptr);
 	glfwDestroyWindow(window);
