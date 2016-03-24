@@ -243,15 +243,42 @@ int main()
 	vk::DescriptorSetAllocateInfo descSetAllocInfo(descriptor_pool, 1, &descriptor_set_layout);
 	auto descriptor_set = device.allocateDescriptorSets(descSetAllocInfo)[0];
 	
+	// add buffer
+	vk::BufferCreateInfo buffInfo({}, sizeof(float) * 9, vk::BufferUsageFlags(vk::BufferUsageFlagBits::eVertexBuffer), vk::SharingMode::eExclusive, 0, nullptr); // TODO: not sure
+	auto vertex_buffer = device.createBuffer(buffInfo, vk::AllocationCallbacks::null());
 	
+	// allocate for the buffer
+	vk::MemoryAllocateInfo memAllocInfo(sizeof(float) * 9, 0); // TODO: better selection of memory type
+	auto device_memory = device.allocateMemory(memAllocInfo, vk::AllocationCallbacks::null());
+	
+	// associate the buffer to the allocated space
+	device.bindBufferMemory(vertex_buffer, device_memory, 0);
+	
+	// write to the buffer
+	auto bufferData = device.mapMemory(device_memory, 0, sizeof(float) * 9, {});
+	
+	float triData[] = {
+		-1.f, -1.f, 0.f,
+		 1.f, -1.f, 0.f,
+		 0.f,  1.f, 0.f
+	};
+	bufferData = triData;
+	
+	device.unmapMemory(device_memory);
+	
+	// update the descriptor sets
+	vk::DescriptorBufferInfo descBufferInfo(vertex_buffer, 0, sizeof(float) * 9);
+	vk::WriteDescriptorSet writeDescSet(descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &descBufferInfo, nullptr);
 	
 	// make a command pool
-	vk::CommandPoolCreateInfo poolInfo(vk::CommandPoolCreateFlags(), 0);
+	vk::CommandPoolCreateInfo poolInfo({}, 0);
 	auto commandPool = device.createCommandPool(poolInfo, vk::AllocationCallbacks::null());
 	
 	// make the command buffer
 	vk::CommandBufferAllocateInfo commandBufferInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1); 
 	auto commandBuffer = device.allocateCommandBuffers(commandBufferInfo);
+	
+	// RENDER!!!!!
 	
 	
 	device.destroy(nullptr);
