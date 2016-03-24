@@ -153,7 +153,6 @@ int main()
 	auto device = create_device(inst, physical_device); assert(device);
 	auto swapchain = create_swapchain(device, surface, physical_device); assert(swapchain);
 	
-	
 	std::vector<vk::Image> images;
 	device.getSwapchainImagesKHR(swapchain, images);
 	
@@ -164,32 +163,32 @@ int main()
 	
 	auto image_view = create_image_view(device, images[0]);
 	
-	auto queue = device.getQueue(0, 0);
+	auto queue = device.getQueue(0, 0); 
 	
 	// make render pass
 	vk::AttachmentDescription attachDesc(vk::AttachmentDescriptionFlags(), format, vk::SampleCountFlagBits::e1, 
 										 vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
 									  vk::AttachmentStoreOp::eDontCare, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-	vk::AttachmentReference attachRef(0, vk::ImageLayout::eColorAttachmentOptimal);
-	vk::SubpassDescription subpassDesc(vk::SubpassDescriptionFlags(), vk::PipelineBindPoint::eGraphics, 0, nullptr, 1, &attachRef, nullptr, nullptr, 0, nullptr);
+	vk::SubpassDescription subpassDesc({}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 0, nullptr, nullptr, nullptr, 0, nullptr);
 	vk::RenderPassCreateInfo renderPassInfo(vk::RenderPassCreateFlags(), 1, &attachDesc, 1, &subpassDesc, 0, nullptr);
 	
-	auto render_pass = device.createRenderPass(renderPassInfo, vk::AllocationCallbacks::null());
+	auto render_pass = device.createRenderPass(renderPassInfo, vk::AllocationCallbacks::null()); assert(render_pass);
 	
 	// make framebuffer
 	vk::FramebufferCreateInfo framebufferInfo(vk::FramebufferCreateFlags(), render_pass, 1, &image_view, 1024, 720, 1);
-	auto framebuffer = device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null());
+	auto framebuffer = device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null()); assert(framebuffer);
 	
 	// make descriptor set layout
 	vk::DescriptorSetLayoutBinding bindings[] = {
 		{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlags(vk::ShaderStageFlagBits::eVertex), nullptr} // vertex position
 	};
 	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 1, bindings);
-	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, vk::AllocationCallbacks::null());
+	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, vk::AllocationCallbacks::null()); assert(descriptor_set_layout);
 	
 	// make pipeline layout
-	vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &descriptor_set_layout, 0, nullptr);
-	auto pipeline_layout = device.createPipelineLayout(pipelineLayoutInfo, vk::AllocationCallbacks::null());
+	vk::PushConstantRange ranges(vk::ShaderStageFlags(vk::ShaderStageFlagBits::eVertex), 0, sizeof(float) * 9);
+	vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &descriptor_set_layout, 1, &ranges);
+	auto pipeline_layout = device.createPipelineLayout(pipelineLayoutInfo, vk::AllocationCallbacks::null()); assert(pipeline_layout);
 	
 	// upload shaders
 	std::ifstream fragFile("frag.spv", std::ios::binary | std::ios::ate);
@@ -208,31 +207,29 @@ int main()
 	vk::ShaderModuleCreateInfo vertModuleInfo({}, vertSize, reinterpret_cast<uint32_t*>(vertSpirVData.data()));
 	vk::ShaderModuleCreateInfo fragModuleInfo({}, fragSize, reinterpret_cast<uint32_t*>(fragSpirVData.data()));
 	
-	auto vert_module = device.createShaderModule(vertModuleInfo, vk::AllocationCallbacks::null());
-	auto frag_module = device.createShaderModule(fragModuleInfo, vk::AllocationCallbacks::null());
+	auto vert_module = device.createShaderModule(vertModuleInfo, vk::AllocationCallbacks::null()); assert(vert_module);
+	auto frag_module = device.createShaderModule(fragModuleInfo, vk::AllocationCallbacks::null()); assert(frag_module);
 	
 	// viewport
 	auto viewport = vk::Viewport(0, 0, 1024, 720, 0, 100);
-	
+		
 	// make graphics pipeline: HOLY SHIT THAT'S A LOT OF METADATA
 	vk::PipelineShaderStageCreateInfo pipeShaderStageInfo[] = {
 		{{}, vk::ShaderStageFlagBits::eVertex, vert_module, "Vert Shader", nullptr},
 		{{}, vk::ShaderStageFlagBits::eFragment, frag_module, "Frag Shader", nullptr}
-	};
-	vk::VertexInputAttributeDescription vertInputAttrDesc(0, 0, vk::Format::eR32G32B32Sfloat, 0);
-	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 0, nullptr, 1, &vertInputAttrDesc);
-	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, false); // TODO: not sure
-	vk::PipelineTessellationStateCreateInfo pipeTessStateInfo({}, 0);
-	vk::Rect2D scissor({}, vk::Extent2D(1024, 720));
-	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 1, &viewport, 1, &scissor);
-	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, false, false, vk::PolygonMode::eFill, vk::CullModeFlags(vk::CullModeFlagBits::eNone), vk::FrontFace::eClockwise, true, 1.f, 100, 1.f, 1.f);
-	vk::SampleMask sampleMask = 1; // TODO: ???? this is just an int
-	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e16, false, 1.f/2.f, &sampleMask, false, false); // TODO: not sure
-	vk::PipelineDepthStencilStateCreateInfo pipeDepthStencilStateInfo({}, true, true, vk::CompareOp::eLessOrEqual, true, false, vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), 0.f, 100.f); // TODO: not sure
-	vk::PipelineColorBlendStateCreateInfo pipeColorBlendStateInfo({}, false, vk::LogicOp::eAnd, 0, nullptr, {{0.f, 0.f, 1.f, 1.f}}); // TODO: not sure
-	vk::PipelineDynamicStateCreateInfo pipeDynStateInfo({}, 0, nullptr); // TODO: not sure
-	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, &pipeTessStateInfo, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, &pipeDepthStencilStateInfo, &pipeColorBlendStateInfo, &pipeDynStateInfo, pipeline_layout, render_pass, 0, {}, 0);
-	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0];
+	}; // GOOD
+	vk::VertexInputAttributeDescription vertInputAttrDesc(0, 0, vk::Format::eR32G32B32Sfloat, 0); // GOOD
+	vk::VertexInputBindingDescription vertInputBindingDesc(0, sizeof(float) * 3, vk::VertexInputRate::eVertex); // GOOD
+	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 1, &vertInputBindingDesc, 1, &vertInputAttrDesc); // GOOD
+	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE); // GOOD
+	vk::PipelineTessellationStateCreateInfo pipeTessStateInfo({}, 1); // GOOD
+	vk::Rect2D scissor({}, vk::Extent2D(1024, 720)); // TODO: not sure
+	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 1, &viewport, 1, &scissor); // GOOD
+	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlags(vk::CullModeFlagBits::eNone), vk::FrontFace::eClockwise, VK_FALSE, 1.f, 100, 1.f, 1.f); // PROBABLY GOOD
+	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e16, VK_FALSE, 1.f/2.f, nullptr, VK_FALSE, VK_FALSE); // GOOD
+	vk::PipelineDepthStencilStateCreateInfo pipeDepthStencilStateInfo({}, VK_FALSE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE, vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), vk::StencilOpState(vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual, 1, 1, 1), 0.f, 1.f); // GOOD
+	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, &pipeTessStateInfo, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, &pipeDepthStencilStateInfo, nullptr, nullptr, pipeline_layout, render_pass, 0, {}, -1); 
+	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0]; assert(graphics_pipeline);
 	
 	// make the descriptor pool
 	vk::DescriptorPoolSize descPoolSize(vk::DescriptorType::eStorageBuffer, 1);
