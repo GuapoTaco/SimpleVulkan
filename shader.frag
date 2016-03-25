@@ -1,8 +1,6 @@
-#version 430
+#version 400
+layout (location = 0) out vec4 uFragColor;
 
-out vec4 color;
-
-void main()
-{
-	color = vec4(1.f, 0.f, 0.f, 1.f);
+void main() {
+   uFragColor = vec4(1.,1.,1.,0.5);
 }

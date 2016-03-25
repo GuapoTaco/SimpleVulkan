@@ -1,9 +1,6 @@
-#version 430
+#version 400
+layout (location = 0) in vec4 pos;
 
-layout(location = 0) in vec3 vert_loc;
-
-void main()
-{
-	gl_Position.xyz = vert_loc;
-	gl_Position.w = 1.f;
+void main() {
+   gl_Position = pos;
 }

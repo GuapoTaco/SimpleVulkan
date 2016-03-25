@@ -253,16 +253,22 @@ int main()
 	vk::PipelineShaderStageCreateInfo pipeShaderStageInfo[] = {
 		{{}, vk::ShaderStageFlagBits::eVertex, vert_module, "main", nullptr},
 		{{}, vk::ShaderStageFlagBits::eFragment, frag_module, "main", nullptr}
-	}; // GOOD
-	vk::VertexInputAttributeDescription vertInputAttrDesc(0, 0, vk::Format::eR32G32B32Sfloat, 0); // GOOD
-	vk::VertexInputBindingDescription vertInputBindingDesc(0, sizeof(float) * 3, vk::VertexInputRate::eVertex); // GOOD
-	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 1, &vertInputBindingDesc, 1, &vertInputAttrDesc); // GOOD
-	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE); // GOOD
-	//vk::Rect2D scissor({}, vk::Extent2D(1024, 720)); // TODO: not sure
-	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 1, nullptr, 1, nullptr); // GOOD
-	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise, VK_FALSE, 0.f, 0.f, 0.f, 0.f); // PROBABLY GOOD
-	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e1, VK_FALSE, 0.f, nullptr, VK_FALSE, VK_FALSE); // GOOD
-	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, nullptr, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, nullptr, nullptr, nullptr, pipeline_layout, render_pass, 0, {}, -1); 
+	}; // GOOD GOOD
+	vk::VertexInputAttributeDescription vertInputAttrDesc(0, 0, vk::Format::eR32G32B32Sfloat, 0); // GOOD GOOD
+	vk::VertexInputBindingDescription vertInputBindingDesc(0, sizeof(float) * 3, vk::VertexInputRate::eVertex); // GOOD GOOD
+	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 1, &vertInputBindingDesc, 1, &vertInputAttrDesc); // GOOD GOOD
+	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE); // GOOD GOOD
+	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 0, nullptr, 1, nullptr); // GOOD GOOD
+	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise, VK_FALSE, 0.f, 0.f, 0.f, 0.f); // GOOD GOOD
+	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e1, VK_FALSE, 0.f, nullptr, VK_FALSE, VK_FALSE); // GOOD GOOD
+	vk::PipelineColorBlendAttachmentState pipeColorAttachState(VK_FALSE, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+	vk::PipelineColorBlendStateCreateInfo pipeColorBlendStateInfo({}, VK_FALSE, vk::LogicOp::eClear, 1, &pipeColorAttachState, {{0, 0, 0, 0}});
+	vk::DynamicState dynStates[] = {
+		vk::DynamicState::eViewport,
+		vk::DynamicState::eScissor
+	};
+	vk::PipelineDynamicStateCreateInfo dynStateInfo({}, 2, dynStates);
+	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, nullptr, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, nullptr, &pipeColorBlendStateInfo, &dynStateInfo, pipeline_layout, render_pass, 0, {}, -1); 
 	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0]; assert(graphics_pipeline);
 	
 	
@@ -284,14 +290,16 @@ int main()
 	// make a new command buffer for the render bit 
 	auto renderCommandBuffer = device.allocateCommandBuffers(commandBufferInfo)[0];
 	
-	renderCommandBuffer.begin({});
+	renderCommandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
 	{
 		// clear color on the screen
-		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 1.f, 0.f, 0.f, 1.f }}));
+		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 1.f, 0.f, 0.f, 1.f }})); // GOOD GOOD
 		
 		// start the render pass
-		vk::RenderPassBeginInfo renderPassBeginInfo(render_pass, framebuffers[nextSwapImage], vk::Rect2D({0, 0}, { 1024, 720 }), 1, &clearColor);
-		renderCommandBuffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
+		vk::RenderPassBeginInfo renderPassBeginInfo(render_pass, framebuffers[nextSwapImage], vk::Rect2D({0, 0}, { 1024, 720 }), 1, &clearColor); // GOOD GOOD
+		renderCommandBuffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline); // GOOD GOOD
+		
+		renderCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline);
 		
 		// viewport
 		vk::Viewport viewport(0, 0, 1280, 720, 0.f, 1.f);
