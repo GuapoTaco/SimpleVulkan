@@ -260,7 +260,7 @@ int main()
 	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE); // GOOD GOOD
 	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 0, nullptr, 1, nullptr); // GOOD GOOD
 	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise, VK_FALSE, 0.f, 0.f, 0.f, 0.f); // GOOD GOOD
-	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e1, VK_FALSE, 0.f, nullptr, VK_FALSE, VK_FALSE); // GOOD GOOD
+	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e2, VK_FALSE, 0.f, nullptr, VK_FALSE, VK_FALSE); // GOOD GOOD
 	vk::PipelineColorBlendAttachmentState pipeColorAttachState(VK_FALSE, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
 	vk::PipelineColorBlendStateCreateInfo pipeColorBlendStateInfo({}, VK_FALSE, vk::LogicOp::eClear, 1, &pipeColorAttachState, {{0, 0, 0, 0}});
 	vk::DynamicState dynStates[] = {
@@ -279,8 +279,8 @@ int main()
 	initCommandBuffer.end();
 	
 	// submit
-	vk::SubmitInfo submitInfo(0, nullptr, nullptr, 1, &initCommandBuffer, 0, nullptr);
-	device_queue.submit({ submitInfo }, {});
+	vk::SubmitInfo initSubmitInfo(0, nullptr, nullptr, 1, &initCommandBuffer, 0, nullptr);
+	device_queue.submit({ initSubmitInfo }, {});
 	
 	// wait for completion
 	device_queue.waitIdle();
@@ -317,17 +317,21 @@ int main()
 	}
 	renderCommandBuffer.end();
 	
-	// submit render
-	vk::PipelineStageFlags pipeStageFlags = vk::PipelineStageFlagBits::eBottomOfPipe;
-	vk::SubmitInfo renderCommandSubmit(0, nullptr, &pipeStageFlags, 1, &renderCommandBuffer, 0, nullptr);
-	device_queue.submit({submitInfo}, {});
-	
-	// swap buffers
-	vk::Result res;
-	vk::PresentInfoKHR presentInfo(0, nullptr, 1, &swapchain, &nextSwapImage, &res);
-	device_queue.presentKHR(presentInfo);
-	
-	std::this_thread::sleep_for(std::chrono::seconds(10));
+	vk::Semaphore sema1 = create_semaphore(device);
+	while(!glfwWindowShouldClose(window))
+	{
+		
+		// submit render
+		vk::PipelineStageFlags pipeStageFlags = vk::PipelineStageFlagBits::eBottomOfPipe;
+		vk::SubmitInfo renderCommandSubmit(0, nullptr, &pipeStageFlags, 1, &renderCommandBuffer, 1, &sema1);
+		device_queue.submit({renderCommandSubmit}, {});
+		
+		// swap buffers
+		vk::Result res;
+		vk::PresentInfoKHR presentInfo(1, &sema1, 1, &swapchain, &nextSwapImage, &res);
+		device_queue.presentKHR(presentInfo);
+		
+	}
 	
 	
 }
