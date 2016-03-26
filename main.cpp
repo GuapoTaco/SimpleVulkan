@@ -391,9 +391,9 @@ int main()
 		// the vertex data
 		vert_buffer_data_t triAndColorData[] = {
 			//COLOR     		 UV
-			{{-1.f, -1.f, 0.f}, {0.f, 0.f}},
-			{{ 1.f, -1.f, 0.f}, {1.f, 0.f}},
-			{{ 0.f, 1.f,  0.f}, {.5f, 1.f}}
+			{{-1.f, -1.f, 0.f}, {1.f, 1.f}},
+			{{ 1.f, -1.f, 0.f}, {0.f, 1.f}},
+			{{ 0.f, 1.f,  0.f}, {.5f, 0.f}}
 		};
 		// copy it into the mapped data 
 		memcpy(mapped_data, triAndColorData, sizeof(triAndColorData));
@@ -406,7 +406,7 @@ int main()
 		
 		// copy in the MVP matrix
 		glm::mat4 model;
-		glm::mat4 view = glm::lookAt(glm::vec3(-3, -4, 2), glm::vec3(0, 0, 0), glm::vec3(0.f, 0.f, 1.f));
+		glm::mat4 view = glm::lookAt(glm::vec3(0, 4, 2), glm::vec3(0, 0, 0), glm::vec3(0.f, 0.f, 1.f));
 		glm::mat4 projection = glm::perspective(glm::radians(30.f), 1280.f/720.f, 0.f, 100.f);
 		
 		glm::mat4 MVP = projection * view * model;
