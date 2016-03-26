@@ -22,75 +22,6 @@ struct vert_buffer_data_t
 	glm::vec2 UV;
 };
 
-vk::Instance create_instance()
-{
-	vk::ApplicationInfo appInfo("Test app", 0, "Engine", 0, VK_MAKE_VERSION(1, 0, 0));
-	
-	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_EXT_debug_report", "VK_KHR_surface" };
-	vk::InstanceCreateInfo instInfo({}, &appInfo, 0, nullptr, 3, extensionNames); 
-	
-	return vk::createInstance(instInfo, nullptr);
-}
-
-vk::SurfaceKHR create_surface(const vk::Instance& inst, GLFWwindow* window)
-{
-	
-	VkSurfaceKHR c_surface;
-	auto result = glfwCreateWindowSurface(inst, window, nullptr, &c_surface);
-	
-	if(result != VK_SUCCESS)
-	{
-		std::cerr << "Error creating surface with error: " << vk::to_string(vk::Result(result));
-		exit(-1);
-	}
-	
-	return {c_surface};
-	
-}
-
-vk::PhysicalDevice get_physical_device(const vk::Instance& inst)
-{
-	std::vector<vk::PhysicalDevice> phyDevices;
-	inst.enumeratePhysicalDevices(phyDevices);
-	
-	// just select the first one
-	if(phyDevices.empty()) throw std::runtime_error("No suitable device found");
-	
-	auto props = phyDevices[0].getProperties();
-	auto heaps = phyDevices[0].getMemoryProperties().memoryHeaps();
-	auto mem_types = phyDevices[0].getMemoryProperties().memoryTypes();
-	
-	std::cout << "Using physical device: " << props.deviceName() << ":" << vk::to_string(props.deviceType()) << std::endl;
-	std::cout << "With memory types: { ";
-	for(auto i = 0; i < phyDevices[0].getMemoryProperties().memoryTypeCount(); ++i)
-	{
-		std::cout << "{" << mem_types[i].heapIndex() << " ," << vk::to_string(mem_types[0].propertyFlags()) << "}, ";
-	}
-	std::cout << " }\nWhich has heaps with sizes: { "; 
-	for(auto i = 0; i < phyDevices[0].getMemoryProperties().memoryHeapCount(); ++i)
-	{
-		std::cout << heaps[i].size() << ", ";
-	}
-	std::cout << " }" << std::endl;
-	
-	return phyDevices[0];
-	
-}
-
-vk::Device create_device(const vk::PhysicalDevice& physical_device, int family_queue_index)
-{
-	auto physDevQueueProps = physical_device.getQueueFamilyProperties();
-	
-	float queue_priorities[] = {0.0f};
-	vk::DeviceQueueCreateInfo queueInfo({}, family_queue_index, physDevQueueProps[family_queue_index].queueCount(), queue_priorities);
-	
-	vk::DeviceCreateInfo devInfo({}, 1, &queueInfo, 0, nullptr, 0, nullptr, nullptr);
-	
-	return physical_device.createDevice(devInfo, nullptr);
-	
-}
-
-
 vk::Semaphore create_semaphore(const vk::Device& device)
 {
 	vk::SemaphoreCreateInfo semaphoreInfo(vk::SemaphoreCreateFlags{});
@@ -164,6 +95,7 @@ uint32_t get_correct_memory_type(vk::Device device, vk::PhysicalDevice phy_dev, 
 
 int main()
 {
+	// so we can catch GLFW errors
 	glfwSetErrorCallback([](int error, const char* desc)
 	{
 		std::cerr << "GLFW error " << error << ": " << desc << std::endl; 
@@ -173,49 +105,216 @@ int main()
 	
 	if(glfwVulkanSupported() == GLFW_FALSE)
 	{
-		std::cout << "ERROR";
+		std::cerr << "This computer doesn't have vulkan support" << std::endl;
+		exit(-1);
 	}
 	
+	// we don't need a OpenGL context
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	
+	// create a window through GLFW
 	GLFWwindow* window = glfwCreateWindow(1280, 720, "Here", nullptr, nullptr);
 
-	auto inst = create_instance();
-	auto surface = create_surface(inst, window);
-	auto physical_device = get_physical_device(inst);
 	
-	int family_queue_index = 0;
-	auto queueFamilyProps = physical_device.getQueueFamilyProperties();
-	for(size_t i = 0; i < queueFamilyProps.size(); ++i)
+	// create instance
+	//////////////////
+	vk::Instance inst;
 	{
-		if(queueFamilyProps[i].queueFlags() & vk::QueueFlagBits::eGraphics && physical_device.getSurfaceSupportKHR(i, surface))
+		vk::ApplicationInfo appInfo(
+			"Test app", 				// application name
+			0,							// application version 
+			"Engine", 					// engine name
+			0, 							// engine version
+			VK_MAKE_VERSION(1, 0, 0)	// minimum vulkan version, use VK_MAKE_VERSION so it is properly packed into an int
+		);
+		
+		// the extensions that the application requires
+		const char* extensionNames[] = { 
+			"VK_KHR_xcb_surface",	// so we can have X windows. GLFW requires this 
+			"VK_KHR_surface" 		// also for GLFW, we need to acquire a surface from them
+		};
+		vk::InstanceCreateInfo instInfo(
+			{},				// Reserved flags -- no actual need for them yet
+			&appInfo,		// The application info to use
+			0,				// The layer count. Use this if you are using validation layers or something
+			nullptr, 		// A pointer to the layers. We aren't using layers
+			2,				// The extension count
+			extensionNames	// A pointer to const char*; the names of the extensions
+		); 
+		
+		inst = vk::createInstance(
+			instInfo,	// The instance info to use 
+			nullptr		// The allocator--the default is fine for us
+		);
+	}
+
+	// create surface
+	/////////////////
+	vk::SurfaceKHR surface;
+	{
+		VkSurfaceKHR c_surface; // the GLFW API takes in the C version, so we need to make this temporary
+		auto result = glfwCreateWindowSurface(
+			inst, 		// the VkInstance, our C++ type is converted into the C type
+			window, 	// the GLFWWindow* to get the surface from
+			nullptr, 	// the allocator--default is fine
+			&c_surface	// the "return" type
+		);
+		
+		// simple error checking
+		if(result != VK_SUCCESS) throw std::runtime_error("Error creating surface with error: " + vk::to_string(vk::Result(result)));
+		
+		// convert the C type into the C++ type
+		surface = c_surface;
+	}
+	
+	// acquire physical device
+	//////////////////////////
+	vk::PhysicalDevice physical_device;
+	{
+		// get the physical devices from the instance
+		std::vector<vk::PhysicalDevice> phyDevices;
+		inst.enumeratePhysicalDevices(phyDevices);
+		
+		// just select the first one
+		if(phyDevices.empty()) throw std::runtime_error("No suitable device found");
+		
+		physical_device = phyDevices[0];
+	}
+	
+	// get the first queue family that satisifies the requirements
+	//////////////////////////////////////////////////////////////
+	uint32_t family_queue_index = 0;
+	{
+		// get the family properties
+		auto queueFamilyProps = physical_device.getQueueFamilyProperties();
+		for(size_t i = 0; i < queueFamilyProps.size(); ++i)
 		{
-			family_queue_index = i;
+			// check if it is valid for us
+			if(queueFamilyProps[i].queueFlags() & vk::QueueFlagBits::eGraphics &&  	// it has to be graphics capable
+				physical_device.getSurfaceSupportKHR(i, surface))					// and it has to support the surface we have
+			{
+				family_queue_index = i;
+				break;
+			}
 		}
 	}
-	std::cout << "using family queue index " << family_queue_index << std::endl;
 	
-	auto device = create_device(physical_device, family_queue_index);
-	auto device_queue = device.getQueue(family_queue_index, 0);
+	// create the device from physical_device
+	/////////////////////////////////////////
+	vk::Device device;
+	{
 	
+	// get the queue from the device
+		float queue_priorities[] = {0.0f}; // the queue should have priority 0
+		
+		// info for queue creation. We will create the queue in the family decided above
+		vk::DeviceQueueCreateInfo queueInfo(
+			{}, 				// reserved flags
+			family_queue_index, // the family to create the queue in
+			1, 					// the amount of queues to create--we will only make one
+			queue_priorities 	// the priority of the queue
+		);
+		
+		// the info for creating the device
+		vk::DeviceCreateInfo devInfo(
+			{}, 		// reserved flags
+			1, 			// how many DeviceQueueCreateInfos you will pass
+			&queueInfo,	// a pointer to the DeviceQueueCreateInfos you have created. You will likely want one of these for each queue family.
+			0, 			// How many layers you will enable for the device. 
+			nullptr, 	// A pointer to the names of the layers you want to load
+			0, 			// How many extensions you will enable for the device.
+			nullptr, 	// A pointer to the names of the extensions
+			nullptr		// The device features to use. This is just a struct of VkBool32s, we won't enable any here.
+		);
+		
+		// actually create the device now
+		device = physical_device.createDevice(
+			devInfo, 	// the DeviceCreateInfo to use
+			nullptr		// the allocator--default is fine
+		);
+		
+	}
+	auto device_queue = device.getQueue(
+		family_queue_index, 	// The family to get the queue from
+		0						// The index of the queue inside the family to use
+	);
 	
 	// make a command pool
-	vk::CommandPoolCreateInfo poolInfo({}, family_queue_index);
-	auto commandPool = device.createCommandPool(poolInfo, nullptr);
+	//////////////////////
+	vk::CommandPool command_pool;
+	{
+		// The metadata we need to create a CommandPool
+		vk::CommandPoolCreateInfo pool_info(
+			{}, 				// reserved flags
+			family_queue_index	// the queue family to use. This means we can submit command buffers in this pool to any queue in this family.
+		);
+		command_pool = device.createCommandPool(
+			pool_info, 	// The CommandPoolCreateInfo that describes the CommandPool to create
+			nullptr		// The allocator--default is find
+		);
+	}
 	
-	// make the command buffer
-	vk::CommandBufferAllocateInfo commandBufferInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1); 
-	auto initCommandBuffer = device.allocateCommandBuffers(commandBufferInfo)[0];
+	// make a command buffer.
+	// This command buffer will be used for initalization. 
+	// This is so we can have a seperate one for rendering that we can reuse each frame.
+	////////////////////////
+	vk::CommandBuffer init_command_buffer;
+	{
+		// The meatadata for allocation of the command buffer
+		vk::CommandBufferAllocateInfo command_buffer_info(
+			command_pool,						// The pool to create them in
+			vk::CommandBufferLevel::ePrimary,	// The "level" to use TODO: explain secondary
+			1									// How many command buffers to create
+		); 
+		
+		// allocate the command buffer. This returns a `std::vector`, so just get the first element--there won't be more than that because we only created one command buffer
+		init_command_buffer = device.allocateCommandBuffers(command_buffer_info)[0];
+	}
 	
-	initCommandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
+	// All commands after this will be queued in the command buffer--not actually ran, not yet.
+	init_command_buffer.begin(
+		vk::CommandBufferBeginInfo( // Begin metadata
+			{},		// Reserved flags
+			nullptr // TODO: explain inheretance
+		)
+	);
 	
-	// add buffer
-	vk::BufferCreateInfo buffInfo({}, sizeof(vert_buffer_data_t) * 3, vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive, family_queue_index, nullptr); // TODO: not sure
-	auto vertex_buffer = device.createBuffer(buffInfo, nullptr);
+	// create the vertex buffer
+	// NOTE: this doesn't actualy allocate any memory, just creates a handle. We allocate later.
+	///////////////////////////
+	vk::Buffer vertex_buffer;
+	{
+		// the buffer creation metadata
+		vk::BufferCreateInfo buffer_info(
+			{}, 									// reserved flags
+			sizeof(vert_buffer_data_t) * 3, 		// the size of the buffer to create. We need three verticies worth for the triange.
+			vk::BufferUsageFlagBits::eVertexBuffer,	// The type. This will be used as a vertex buffer in the shader.
+			vk::SharingMode::eExclusive,			// This won't be a shared resource TODO: explain more
+			1, 										// The number of queue families to make sure that this is valid for TODO: check
+			&family_queue_index						// The queue family
+		);
+		vertex_buffer = device.createBuffer(
+			buffer_info, 	// The BufferCreateInfo to use
+			nullptr			// The allocator--default is fine
+		);
+	}
 	
-	// add index buffer
-	vk::BufferCreateInfo indexBuffInfo({}, sizeof(glm::uvec3), vk::BufferUsageFlagBits::eIndexBuffer, vk::SharingMode::eExclusive, family_queue_index, nullptr);
-	auto index_buffer = device.createBuffer(indexBuffInfo, nullptr);
+	// create the index buffer
+	// NOTE: this also doens't allocate.
+	// The index buffer is for saying the indicies in the vertex buffer to draw in the triangle
+	vk::Buffer index_buffer;
+	{
+		// the creation metadata
+		vk::BufferCreateInfo indexBuffInfo(
+			{}, 									// reserved flags
+			sizeof(glm::uvec3), 					// the buffer flag--we only want one triangle worth
+			vk::BufferUsageFlagBits::eIndexBuffer, 	// the usage--it is an index buffer
+			vk::SharingMode::eExclusive, 			// no sharing TODO: explain
+			1,										// the number of queue families to support TODO: factcheck
+			&family_queue_index						// the pointer to the queue families
+		);
+		index_buffer = device.createBuffer(indexBuffInfo, nullptr);
+	}
 	
 	// allocate for the vertex buffer and the index buffer
 	vk::MemoryAllocateInfo memAllocInfo(device.getBufferMemoryRequirements(vertex_buffer).size() + device.getBufferMemoryRequirements(index_buffer).size(), 2); 
@@ -448,12 +547,12 @@ int main()
 	
 	// make image memory barrier
 	vk::ImageMemoryBarrier imageMemoryBarrier({}, vk::AccessFlagBits::eColorAttachmentWrite, vk::ImageLayout::eUndefined, vk::ImageLayout::ePresentSrcKHR, family_queue_index, family_queue_index, images[nextSwapImage], vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1));
-	initCommandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTopOfPipe, {}, {}, {}, {imageMemoryBarrier});
+	init_command_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTopOfPipe, {}, {}, {}, {imageMemoryBarrier});
 	
-	initCommandBuffer.end();
+	init_command_buffer.end();
 	
 	// submit
-	vk::SubmitInfo initSubmitInfo(0, nullptr, nullptr, 1, &initCommandBuffer, 0, nullptr);
+	vk::SubmitInfo initSubmitInfo(0, nullptr, nullptr, 1, &init_command_buffer, 0, nullptr);
 	device_queue.submit({ initSubmitInfo }, {});
 	
 	// wait for completion
@@ -462,43 +561,51 @@ int main()
 	// RENDER
 	
 	// make a new command buffer for the render bit 
-	auto renderCommandBuffer = device.allocateCommandBuffers(commandBufferInfo)[0];
+	vk::CommandBuffer render_command_buffer;
+	{
+		vk::CommandBufferAllocateInfo command_buffer_info(
+			command_pool,
+			vk::CommandBufferLevel::ePrimary,
+			1
+		);
+		render_command_buffer = device.allocateCommandBuffers(command_buffer_info)[0];
+	}
 	
-	renderCommandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
+	render_command_buffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
 	{
 		// clear color on the screen
 		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 0.f, 0.f, 0.f, 1.f }})); 
 		
 		// start the render pass
 		vk::RenderPassBeginInfo renderPassBeginInfo(render_pass, framebuffers[nextSwapImage], vk::Rect2D({0, 0}, { 1280, 720 }), 1, &clearColor);
-		renderCommandBuffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
+		render_command_buffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
 		
-		renderCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline);
+		render_command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline);
 		
 		
-		renderCommandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout, 0, {descriptor_set}, {});
+		render_command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout, 0, {descriptor_set}, {});
 		
 		
 		// viewport
 		vk::Viewport viewport(0, 0, 1280, 720, 0.f, 1.f);
-		renderCommandBuffer.setViewport(0, {viewport});
+		render_command_buffer.setViewport(0, {viewport});
 		
 		// set scissor
 		vk::Rect2D scissor({0, 0}, {1280, 720});
-		renderCommandBuffer.setScissor(0, {scissor});
+		render_command_buffer.setScissor(0, {scissor});
 		
 		// bind buffer -- this binds both the location and UV
-		renderCommandBuffer.bindVertexBuffers(0, {vertex_buffer, vertex_buffer}, {0, 0});
+		render_command_buffer.bindVertexBuffers(0, {vertex_buffer, vertex_buffer}, {0, 0});
 		
-		renderCommandBuffer.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
+		render_command_buffer.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
 		
 		// DRAW!!!
-		renderCommandBuffer.drawIndexed(3, 1, 0, 0, 0);
+		render_command_buffer.drawIndexed(3, 1, 0, 0, 0);
 		
-		renderCommandBuffer.endRenderPass();
+		render_command_buffer.endRenderPass();
 		
 	}
-	renderCommandBuffer.end();
+	render_command_buffer.end();
 	
 	vk::Semaphore sema1 = create_semaphore(device);
 	while(!glfwWindowShouldClose(window))
@@ -506,7 +613,7 @@ int main()
 		
 		// submit render
 		vk::PipelineStageFlags pipeStageFlags = vk::PipelineStageFlagBits::eBottomOfPipe;
-		vk::SubmitInfo renderCommandSubmit(0, nullptr, &pipeStageFlags, 1, &renderCommandBuffer, 1, &sema1);
+		vk::SubmitInfo renderCommandSubmit(0, nullptr, &pipeStageFlags, 1, &render_command_buffer, 1, &sema1);
 		
 		
 		device_queue.submit({renderCommandSubmit}, fence);
@@ -534,7 +641,7 @@ int main()
 	
 	// cleanup
 	device.destroySemaphore(sema1, nullptr);
-	device.freeCommandBuffers(commandPool, {renderCommandBuffer});
+	device.freeCommandBuffers(command_pool, {render_command_buffer});
 	device.destroyPipeline(graphics_pipeline, nullptr);
 	for(auto&& image_view : image_views)
 	{
@@ -555,8 +662,8 @@ int main()
 	device.destroyShaderModule(vert_module, nullptr);
 	device.freeMemory(device_memory, nullptr);
 	device.destroyBuffer(vertex_buffer, nullptr);
-	device.freeCommandBuffers(commandPool, {initCommandBuffer});
-	device.destroyCommandPool(commandPool, nullptr);
+	device.freeCommandBuffers(command_pool, {init_command_buffer});
+	device.destroyCommandPool(command_pool, nullptr);
 	device.destroy(nullptr);
 	inst.destroySurfaceKHR(surface, nullptr);
 	inst.destroy(nullptr);
