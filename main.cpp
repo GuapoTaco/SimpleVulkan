@@ -26,7 +26,7 @@ vk::Instance create_instance()
 {
 	vk::ApplicationInfo appInfo("Test app", 0, "Engine", 0, VK_MAKE_VERSION(1, 0, 0));
 	
-	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_EXT_debug_report", "VK_KHR_surface" };
+	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_KHR_surface", "VK_KHR_swapchain" };
 	const char* layerNames[] = { "VK_LAYER_LUNARG_standard_validation"};
 	vk::InstanceCreateInfo instInfo({}, &appInfo, 1, layerNames, 3, extensionNames); 
 	
@@ -217,7 +217,7 @@ int main()
 	auto mem_reqs = device.getBufferMemoryRequirements(vertex_buffer);
 	
 	// allocate for the buffer
-	vk::MemoryAllocateInfo memAllocInfo(mem_reqs.size(), get_correct_memory_type(device, physical_device, vertex_buffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)); 
+	vk::MemoryAllocateInfo memAllocInfo(mem_reqs.size(), 2); 
 	auto device_memory = device.allocateMemory(memAllocInfo, nullptr);
 	
 	// associate the buffer to the allocated space
@@ -241,7 +241,7 @@ int main()
 	auto mvp_uniform_buffer = device.createBuffer(uniBufInfo, nullptr);
 	
 	// allocate
-	vk::MemoryAllocateInfo uniAllocInfo(device.getBufferMemoryRequirements(mvp_uniform_buffer).size(), get_correct_memory_type(device, physical_device, mvp_uniform_buffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+	vk::MemoryAllocateInfo uniAllocInfo(device.getBufferMemoryRequirements(mvp_uniform_buffer).size(), 2);
 	auto uniform_memory = device.allocateMemory(uniAllocInfo, nullptr);
 	
 	device.bindBufferMemory(mvp_uniform_buffer, uniform_memory, 0);
@@ -273,7 +273,7 @@ int main()
 	std::cout << "Image Size: " << imageExtents.width() << " x " << imageExtents.height() << " x " << imageExtents.depth() << " Requested size: " << device.getImageMemoryRequirements(image).size() << " Buffer size: " << imageData.size() << std::endl;
 	
 	
-	vk::MemoryAllocateInfo imageAllocInfo(device.getImageMemoryRequirements(image).size(), get_correct_memory_type(device, physical_device, image, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+	vk::MemoryAllocateInfo imageAllocInfo(device.getImageMemoryRequirements(image).size(), 2);
 	auto imageBuffer = device.allocateMemory(imageAllocInfo, nullptr);
 	
 	
