@@ -4,6 +4,9 @@
 #define VKCPP_ENHANCED_MODE
 #include <vulkan/vk_cpp.h>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <iostream>
 #include <fstream>
 #include <thread>
@@ -15,7 +18,11 @@ vk::Instance create_instance()
 	vk::ApplicationInfo appInfo("Test app", 0, "Engine", 0, VK_MAKE_VERSION(1, 0, 0));
 	
 	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_EXT_debug_report", "VK_KHR_surface" };
-	vk::InstanceCreateInfo instInfo({}, &appInfo, 0, nullptr, 3, extensionNames); 
+	const char* layerNames[] = { "VK_LAYER_LUNARG_param_checker", "VK_LAYER_LUNARG_api_dump", 
+		"VK_LAYER_LUNARG_object_tracker", "VK_LAYER_GOOGLE_threading", "VK_LAYER_LUNARG_screenshot",  
+		"VK_LAYER_LUNARG_image", "VK_LAYER_LUNARG_swapchain", "VK_LAYER_GOOGLE_unique_objects", "VK_LAYER_LUNARG_mem_tracker", 
+		"VK_LAYER_LUNARG_device_limits", "VK_LAYER_LUNARG_draw_state", "VK_LAYER_LUNARG_standard_validation"};
+	vk::InstanceCreateInfo instInfo({}, &appInfo, 12, layerNames, 3, extensionNames); 
 	
 	return vk::createInstance(instInfo, vk::AllocationCallbacks::null());
 }
@@ -102,11 +109,11 @@ int main()
 	
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	
-	GLFWwindow* window = glfwCreateWindow(1024, 720, "Here", nullptr, nullptr);
+	GLFWwindow* window = glfwCreateWindow(1280, 720, "Here", nullptr, nullptr);
 
-	auto inst = create_instance(); assert(inst);
-	auto surface = create_surface(inst, window); assert(surface);
-	auto physical_device = get_physical_device(inst); assert(physical_device);
+	auto inst = create_instance();
+	auto surface = create_surface(inst, window);
+	auto physical_device = get_physical_device(inst);
 	
 	int family_queue_index = 0;
 	auto queueFamilyProps = physical_device.getQueueFamilyProperties();
@@ -119,8 +126,8 @@ int main()
 	}
 	std::cout << "using family queue index " << family_queue_index << std::endl;
 	
-	auto device = create_device(physical_device, family_queue_index); assert(device);
-	auto device_queue = device.getQueue(family_queue_index, 0); assert(device_queue);
+	auto device = create_device(physical_device, family_queue_index);
+	auto device_queue = device.getQueue(family_queue_index, 0);
 	
 	
 	// make a command pool
@@ -134,30 +141,54 @@ int main()
 	initCommandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
 	
 	// add buffer
-	vk::BufferCreateInfo buffInfo({}, sizeof(float) * 9, vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive, 0, nullptr); // TODO: not sure
+	vk::BufferCreateInfo buffInfo({}, sizeof(glm::vec3) * 9, vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive, family_queue_index, nullptr); // TODO: not sure
 	auto vertex_buffer = device.createBuffer(buffInfo, vk::AllocationCallbacks::null());
 	
 	auto mem_reqs = device.getBufferMemoryRequirements(vertex_buffer);
 	
 	// allocate for the buffer
-	vk::MemoryAllocateInfo memAllocInfo(mem_reqs.size(), 9); // TODO: better selection of memory type
+	vk::MemoryAllocateInfo memAllocInfo(mem_reqs.size(), 0); // TODO: better selection of memory type
 	auto device_memory = device.allocateMemory(memAllocInfo, vk::AllocationCallbacks::null());
 	
 	// associate the buffer to the allocated space
 	device.bindBufferMemory(vertex_buffer, device_memory, 0);
 	
 	// write to the buffer
-	auto bufferData = device.mapMemory(device_memory, 0, mem_reqs.size(), {});
+	auto bufferData = device.mapMemory(device_memory, 0, sizeof(glm::vec3) * 9, {});
 	
-	float triData[] = {
-		-1.f, -1.f, 0.f,
-		 1.f, -1.f, 0.f,
-		 0.f,  1.f, 0.f
+	glm::vec3 triAndColorData[] = {
+		{-1.f, -1.f, 0.f}, {1.f, 1.f, 0.f},
+		{ 1.f, -1.f, 0.f}, {0.f, 1.f, 1.f},
+		{0.f,  1.f,  0.f}, {1.f, 0.f, 1.f},
 	};
-	memcpy(bufferData, triData, sizeof(triData));
+	memcpy(bufferData, triAndColorData, sizeof(triAndColorData));
 	
 	device.unmapMemory(device_memory);
 	
+	
+	/// make uniform buffer
+	vk::BufferCreateInfo uniBufInfo({}, sizeof(glm::mat4), vk::BufferUsageFlagBits::eUniformBuffer, vk::SharingMode::eExclusive, family_queue_index, nullptr);
+	auto mvp_uniform_buffer = device.createBuffer(uniBufInfo, vk::AllocationCallbacks::null());
+	
+	// allocate
+	vk::MemoryAllocateInfo uniAllocInfo(device.getBufferMemoryRequirements(mvp_uniform_buffer).size(), 0);
+	auto uniform_memory = device.allocateMemory(uniAllocInfo, vk::AllocationCallbacks::null());
+	
+	device.bindBufferMemory(mvp_uniform_buffer, uniform_memory, 0);
+	
+	// write
+	auto uniBufferData = device.mapMemory(uniform_memory, 0, sizeof(glm::mat4), {});
+	
+	glm::mat4 model;
+	glm::mat4 view = glm::lookAt(glm::vec3(3, 4, 2), glm::vec3(0, 0, 0), glm::vec3(0.f, 0.f, 1.f));
+	glm::mat4 projection = glm::perspective(glm::radians(60.f), 1280.f/720.f, 0.f, 100.f);
+	
+	glm::mat4 MVP = projection * view * model;
+	
+	
+	memcpy(uniBufferData, &MVP, sizeof(MVP));
+	
+	device.unmapMemory(uniform_memory);
 	
 	
 	// upload shaders
@@ -177,17 +208,38 @@ int main()
 	vk::ShaderModuleCreateInfo vertModuleInfo({}, vertSpirVData.size(), reinterpret_cast<const uint32_t*>(vertSpirVData.data()));
 	vk::ShaderModuleCreateInfo fragModuleInfo({}, fragSpirVData.size(), reinterpret_cast<const uint32_t*>(fragSpirVData.data()));
 	
-	auto vert_module = device.createShaderModule(vertModuleInfo, vk::AllocationCallbacks::null()); assert(vert_module);
-	auto frag_module = device.createShaderModule(fragModuleInfo, vk::AllocationCallbacks::null()); assert(frag_module);
+	auto vert_module = device.createShaderModule(vertModuleInfo, vk::AllocationCallbacks::null());
+	auto frag_module = device.createShaderModule(fragModuleInfo, vk::AllocationCallbacks::null());
 	
 	
-	// make descriptor set
-	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 0, nullptr);
-	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, vk::AllocationCallbacks::null()); assert(descriptor_set_layout);
+	// make descriptor set layout
+	vk::DescriptorSetLayoutBinding bindings[] = {
+		{0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr}
+	};
+ 	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 1, bindings);
+	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, vk::AllocationCallbacks::null());
+	
+	// make descriptor set pool
+	vk::DescriptorPoolSize descPoolSizes[] = {
+		{vk::DescriptorType::eUniformBuffer, 1}
+	};
+	vk::DescriptorPoolCreateInfo descPoolInfo({}, 1, 2, descPoolSizes);
+	auto descriptor_pool = device.createDescriptorPool(descPoolInfo, vk::AllocationCallbacks::null());
 
+	// make a descriptor set
+	vk::DescriptorSetAllocateInfo descSetAllocInfo(descriptor_pool, 1, &descriptor_set_layout);
+	auto descriptor_set = device.allocateDescriptorSets(descSetAllocInfo)[0];
+	
+	// update the descriptor set
+	vk::DescriptorBufferInfo descBufferInfo(mvp_uniform_buffer, 0, sizeof(glm::mat4));
+	vk::WriteDescriptorSet writeDescSet(descriptor_set, 0, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &descBufferInfo, nullptr);
+	device.updateDescriptorSets({writeDescSet}, {});
+	
+	
+	
 	// make pipeline layout
 	vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &descriptor_set_layout, 0, nullptr);
-	auto pipeline_layout = device.createPipelineLayout(pipelineLayoutInfo, vk::AllocationCallbacks::null()); assert(pipeline_layout);
+	auto pipeline_layout = device.createPipelineLayout(pipelineLayoutInfo, vk::AllocationCallbacks::null());
 	
 	// make render pass
 	vk::AttachmentDescription attachDesc({}, vk::Format::eR32G32B32A32Sfloat, vk::SampleCountFlagBits::e1, 
@@ -198,7 +250,7 @@ int main()
 	vk::SubpassDescription subpassDesc({}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 1, &colorAttachments, nullptr, &depthRef, 0, nullptr);
 	vk::RenderPassCreateInfo renderPassInfo({}, 1, &attachDesc, 1, &subpassDesc, 0, nullptr);
 	
-	auto render_pass = device.createRenderPass(renderPassInfo, vk::AllocationCallbacks::null()); assert(render_pass);
+	auto render_pass = device.createRenderPass(renderPassInfo, vk::AllocationCallbacks::null());
 	
 	
 	// construct a fence for sync
@@ -239,7 +291,7 @@ int main()
 		
 		
 		// make framebuffer
-		vk::FramebufferCreateInfo framebufferInfo({}, render_pass, 1, &image_views[image_views.size() - 1], 1024, 720, 1);
+		vk::FramebufferCreateInfo framebufferInfo({}, render_pass, 1, &image_views[image_views.size() - 1], 1280, 720, 1);
 		framebuffers.push_back(device.createFramebuffer(framebufferInfo, vk::AllocationCallbacks::null()));
 		
 	}
@@ -254,13 +306,19 @@ int main()
 		{{}, vk::ShaderStageFlagBits::eVertex, vert_module, "main", nullptr},
 		{{}, vk::ShaderStageFlagBits::eFragment, frag_module, "main", nullptr}
 	}; // GOOD GOOD
-	vk::VertexInputAttributeDescription vertInputAttrDesc(0, 0, vk::Format::eR32G32B32Sfloat, 0); // GOOD GOOD
-	vk::VertexInputBindingDescription vertInputBindingDesc(0, sizeof(float) * 3, vk::VertexInputRate::eVertex); // GOOD GOOD
-	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 1, &vertInputBindingDesc, 1, &vertInputAttrDesc); // GOOD GOOD
+	vk::VertexInputAttributeDescription vertInputAttrDescs[] = {
+		{0, 0, vk::Format::eR32G32B32Sfloat, 0},
+		{1, 1, vk::Format::eR32G32B32Sfloat, sizeof(glm::vec3)}
+	}; 
+	vk::VertexInputBindingDescription vertInputBindingDescs[] = {
+		{0, sizeof(glm::vec3) * 2, vk::VertexInputRate::eVertex},
+		{1, sizeof(glm::vec3) * 2, vk::VertexInputRate::eVertex} 
+	};
+	vk::PipelineVertexInputStateCreateInfo pipeVertexInputStateInfo({}, 2, vertInputBindingDescs, 2, vertInputAttrDescs); // GOOD GOOD
 	vk::PipelineInputAssemblyStateCreateInfo pipeInputAsmStateInfo({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE); // GOOD GOOD
 	vk::PipelineViewportStateCreateInfo pipeViewportStateInfo({}, 0, nullptr, 1, nullptr); // GOOD GOOD
 	vk::PipelineRasterizationStateCreateInfo pipeRasterizationStateInfo({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise, VK_FALSE, 0.f, 0.f, 0.f, 0.f); // GOOD GOOD
-	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e2, VK_FALSE, 0.f, nullptr, VK_FALSE, VK_FALSE); // GOOD GOOD
+	vk::PipelineMultisampleStateCreateInfo pipeMultisampleStateInfo({}, vk::SampleCountFlagBits::e1, VK_FALSE, 0.f, nullptr, VK_FALSE, VK_FALSE); // GOOD GOOD
 	vk::PipelineColorBlendAttachmentState pipeColorAttachState(VK_FALSE, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
 	vk::PipelineColorBlendStateCreateInfo pipeColorBlendStateInfo({}, VK_FALSE, vk::LogicOp::eClear, 1, &pipeColorAttachState, {{0, 0, 0, 0}});
 	vk::DynamicState dynStates[] = {
@@ -269,7 +327,7 @@ int main()
 	};
 	vk::PipelineDynamicStateCreateInfo dynStateInfo({}, 2, dynStates);
 	vk::GraphicsPipelineCreateInfo graphicsPipeInfo({}, 2, pipeShaderStageInfo, &pipeVertexInputStateInfo, &pipeInputAsmStateInfo, nullptr, &pipeViewportStateInfo, &pipeRasterizationStateInfo, &pipeMultisampleStateInfo, nullptr, &pipeColorBlendStateInfo, &dynStateInfo, pipeline_layout, render_pass, 0, {}, -1); 
-	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0]; assert(graphics_pipeline);
+	auto graphics_pipeline = device.createGraphicsPipelines({}, {graphicsPipeInfo}, vk::AllocationCallbacks::null())[0];
 	
 	
 	// make image memory barrier
@@ -293,13 +351,17 @@ int main()
 	renderCommandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
 	{
 		// clear color on the screen
-		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 1.f, 0.f, 0.f, 1.f }})); // GOOD GOOD
+		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 1.f, 1.f, 0.f, 1.f }})); 
 		
 		// start the render pass
-		vk::RenderPassBeginInfo renderPassBeginInfo(render_pass, framebuffers[nextSwapImage], vk::Rect2D({0, 0}, { 1024, 720 }), 1, &clearColor); // GOOD GOOD
-		renderCommandBuffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline); // GOOD GOOD
+		vk::RenderPassBeginInfo renderPassBeginInfo(render_pass, framebuffers[nextSwapImage], vk::Rect2D({0, 0}, { 1280, 720 }), 1, &clearColor);
+		renderCommandBuffer.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
 		
 		renderCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline);
+		
+		
+		renderCommandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout, 0, {descriptor_set}, {});
+		
 		
 		// viewport
 		vk::Viewport viewport(0, 0, 1280, 720, 0.f, 1.f);
@@ -310,10 +372,15 @@ int main()
 		renderCommandBuffer.setScissor(0, {scissor});
 		
 		// bind buffer
-		renderCommandBuffer.bindVertexBuffers(0, {vertex_buffer}, { 0 });
+		renderCommandBuffer.bindVertexBuffers(0, {vertex_buffer}, {0});
+		renderCommandBuffer.bindVertexBuffers(1, {vertex_buffer}, {0});
 		
 		// DRAW!!!
 		renderCommandBuffer.draw(3, 1, 0, 0);
+	
+		
+		renderCommandBuffer.endRenderPass();
+		
 	}
 	renderCommandBuffer.end();
 	
@@ -324,14 +391,52 @@ int main()
 		// submit render
 		vk::PipelineStageFlags pipeStageFlags = vk::PipelineStageFlagBits::eBottomOfPipe;
 		vk::SubmitInfo renderCommandSubmit(0, nullptr, &pipeStageFlags, 1, &renderCommandBuffer, 1, &sema1);
-		device_queue.submit({renderCommandSubmit}, {});
+		
+		
+		device_queue.submit({renderCommandSubmit}, fence);
+		
+		device.waitForFences({fence}, VK_TRUE, UINT64_MAX);
 		
 		// swap buffers
 		vk::Result res;
 		vk::PresentInfoKHR presentInfo(1, &sema1, 1, &swapchain, &nextSwapImage, &res);
 		device_queue.presentKHR(presentInfo);
 		
+		glfwPollEvents();
+		
 	}
 	
+	// do this asap so the program still seems respsnsive
+	glfwDestroyWindow(window);
+	
+	// cleanup
+	device.destroySemaphore(sema1, nullptr);
+	device.freeCommandBuffers(commandPool, {renderCommandBuffer});
+	device.destroyPipeline(graphics_pipeline, nullptr);
+	for(auto&& image_view : image_views)
+	{
+		device.destroyImageView(image_view, nullptr);
+	}
+	for(auto&& framebuffer : framebuffers)
+	{
+		device.destroyFramebuffer(framebuffer, nullptr);
+	}
+	device.freeDescriptorSets(descriptor_pool, {descriptor_set});
+	device.destroyDescriptorPool(descriptor_pool, nullptr);
+	device.destroySwapchainKHR(swapchain, nullptr);
+	device.destroyFence(fence, nullptr);
+	device.destroyRenderPass(render_pass, nullptr);
+	device.destroyPipelineLayout(pipeline_layout, nullptr);
+	device.destroyDescriptorSetLayout(descriptor_set_layout, nullptr);
+	device.destroyShaderModule(frag_module, nullptr);
+	device.destroyShaderModule(vert_module, nullptr);
+	device.freeMemory(device_memory, nullptr);
+	device.destroyBuffer(vertex_buffer, nullptr);
+	device.freeCommandBuffers(commandPool, {initCommandBuffer});
+	device.destroyCommandPool(commandPool, nullptr);
+	device.destroy(nullptr);
+	inst.destroySurfaceKHR(surface, nullptr);
+	inst.destroy(nullptr);
+	glfwTerminate();
 	
 }
