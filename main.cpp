@@ -27,8 +27,7 @@ vk::Instance create_instance()
 	vk::ApplicationInfo appInfo("Test app", 0, "Engine", 0, VK_MAKE_VERSION(1, 0, 0));
 	
 	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_EXT_debug_report", "VK_KHR_surface" };
-	const char* layernames[] = { "VK_LAYER_LUNARG_standard_validation" };
-	vk::InstanceCreateInfo instInfo({}, &appInfo, 1, layernames, 3, extensionNames); 
+	vk::InstanceCreateInfo instInfo({}, &appInfo, 0, nullptr, 3, extensionNames); 
 	
 	return vk::createInstance(instInfo, nullptr);
 }
@@ -261,38 +260,6 @@ int main()
 	device.unmapMemory(uniform_memory);
 	
 	
-	// create image
-	std::vector<unsigned char> imageData; vk::Extent3D imageExtents;
-	auto err = lodepng::decode(imageData, imageExtents.width(), imageExtents.height(), "image.png", LodePNGColorType::LCT_RGBA, 8);
-	imageExtents.depth(1);
-	assert(!err);
-	
-	vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, vk::Format::eR8G8B8A8Uint, imageExtents, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eLinear, vk::ImageUsageFlagBits::eSampled, vk::SharingMode::eExclusive, family_queue_index, nullptr, vk::ImageLayout::eGeneral);
-	auto image = device.createImage(imageInfo, nullptr);
-	
-	std::cout << "Image Size: " << imageExtents.width() << " x " << imageExtents.height() << " x " << imageExtents.depth() << " Requested size: " << device.getImageMemoryRequirements(image).size() << " Buffer size: " << imageData.size() << std::endl;
-	
-	
-	vk::MemoryAllocateInfo imageAllocInfo(device.getImageMemoryRequirements(image).size(), 2);
-	auto imageBuffer = device.allocateMemory(imageAllocInfo, nullptr);
-	
-	
-	device.bindImageMemory(image, imageBuffer, 0);
-	
- 	auto imageBufferData = device.mapMemory(imageBuffer, 0, VK_WHOLE_SIZE, {});
-// 	
-// 	memcpy(imageBufferData, &imageData[0], imageData.size());
-// 	
-// 	device.unmapMemory(imageBuffer);
-	
-	// make a sampler
-	vk::SamplerCreateInfo samplerInfo({}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, 0.f, VK_FALSE, 0.f, VK_FALSE, vk::CompareOp::eNever, 0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite, VK_FALSE);
-	auto sampler = device.createSampler(samplerInfo, nullptr);
-	
-	// make an image view
-	vk::ImageViewCreateInfo imageViewInfo({}, image, vk::ImageViewType::e2D, vk::Format::eR8G8B8A8Uint, vk::ComponentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG, vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA), vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1));
-	auto image_view = device.createImageView(imageViewInfo, nullptr);
-	
 	// upload shaders
 	std::ifstream fragFile("frag.spv", std::ios::binary | std::ios::ate);
 	std::streamsize fragSize = fragFile.tellg();
@@ -338,9 +305,7 @@ int main()
 	vk::DescriptorBufferInfo descBufferInfo(mvp_uniform_buffer, 0, sizeof(glm::mat4));
 	vk::WriteDescriptorSet writeDescSet(descriptor_set, 0, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &descBufferInfo, nullptr);
 	
-	vk::DescriptorImageInfo descImageInfo(sampler, image_view, vk::ImageLayout::eGeneral);
-	vk::WriteDescriptorSet imageWriteDescSet(descriptor_set, 1, 0, 1, vk::DescriptorType::eSampledImage, &descImageInfo, nullptr, nullptr);
-	device.updateDescriptorSets({writeDescSet, imageWriteDescSet}, {});
+	device.updateDescriptorSets({writeDescSet}, {});
 	
 	
 	
