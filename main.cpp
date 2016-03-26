@@ -302,10 +302,11 @@ int main()
 	// create the index buffer
 	// NOTE: this also doens't allocate.
 	// The index buffer is for saying the indicies in the vertex buffer to draw in the triangle
+	///////////////////////////////////////////////////////////////////////////////////////////
 	vk::Buffer index_buffer;
 	{
 		// the creation metadata
-		vk::BufferCreateInfo indexBuffInfo(
+		vk::BufferCreateInfo index_buffer_info(
 			{}, 									// reserved flags
 			sizeof(glm::uvec3), 					// the buffer flag--we only want one triangle worth
 			vk::BufferUsageFlagBits::eIndexBuffer, 	// the usage--it is an index buffer
@@ -313,112 +314,259 @@ int main()
 			1,										// the number of queue families to support TODO: factcheck
 			&family_queue_index						// the pointer to the queue families
 		);
-		index_buffer = device.createBuffer(indexBuffInfo, nullptr);
+		// create the buffer
+		index_buffer = device.createBuffer(
+			index_buffer_info, 	// the BufferCreateInfo to use
+			nullptr				// the allocator--default is fine
+		);
 	}
 	
-	// allocate for the vertex buffer and the index buffer
-	vk::MemoryAllocateInfo memAllocInfo(device.getBufferMemoryRequirements(vertex_buffer).size() + device.getBufferMemoryRequirements(index_buffer).size(), 2); 
-	auto device_memory = device.allocateMemory(memAllocInfo, nullptr);
+	// make uniform buffer
+	// this is for the MVP matrix we will upload to the device
+	// again, this doesn't allocate
+	//////////////////////////////////////////////////////////
+	vk::Buffer mvp_uniform_buffer;
+	{
+		// buffer creation metadata
+		vk::BufferCreateInfo uniBufInfo(
+			{}, 										// Reserved flags
+			sizeof(glm::mat4), 							// The size of the buffer
+			vk::BufferUsageFlagBits::eUniformBuffer, 	// The type--this is a uniform buffer
+			vk::SharingMode::eExclusive, 				// No sharing
+			1,											// the number of queue families to support TODO: factcheck
+			&family_queue_index							// the pointer to the queue families
+		);
+		// create the buffer
+		mvp_uniform_buffer = device.createBuffer(
+			uniBufInfo,	// the creation metadata
+			nullptr		// allocator--default is fine
+		);
 	
-	// associate the buffer to the allocated space
-	device.bindBufferMemory(vertex_buffer, device_memory, 0);
-	device.bindBufferMemory(index_buffer, device_memory, device.getBufferMemoryRequirements(vertex_buffer).size());
+	}
 	
-	// write to the buffer
-	auto bufferData = device.mapMemory(device_memory, 0, VK_WHOLE_SIZE, {});
+	// Allocate device memory for our three buffers. 
+	// You could do two different allocation if you want, this should be less code and more efficient.
+	//////////////////////////////////////////////////////////////////////////////////////////////////
+	vk::DeviceMemory device_memory;
+	{
+		vk::MemoryAllocateInfo device_allocation_info(
+				device.getBufferMemoryRequirements(vertex_buffer).size() + 		// This is the size. We use getBufferMemoryRequirements becaues this also takes into account padding, hidden metadata, etc
+				device.getBufferMemoryRequirements(index_buffer).size() +		// The size is the size we need for each buffer combined
+				device.getBufferMemoryRequirements(mvp_uniform_buffer).size(),
+			2																	// TODO: fix & document
+		); 
+		// allocate
+		device_memory = device.allocateMemory(
+			device_allocation_info, 	// the allocation metadata
+			nullptr						// allocator--default is fine
+		);
+	}
 	
-	vert_buffer_data_t triAndColorData[] = {//COLOR      UV
-		{{-1.f, -1.f, 0.f}, {0.f, 0.f}},
-		{{ 1.f, -1.f, 0.f}, {1.f, 0.f}},
-		{{ 0.f, 1.f,  0.f}, {.5f, 1.f}}
-	};
-	memcpy(bufferData, triAndColorData, sizeof(triAndColorData));
-	
-	// copy the index buffer
-	glm::uvec3 indicies = {0, 1, 2};
-	memcpy((char*)bufferData + device.getBufferMemoryRequirements(vertex_buffer).size(), &indicies, sizeof(indicies));
-	
-	device.unmapMemory(device_memory);
-	
-	
-	/// make uniform buffer
-	vk::BufferCreateInfo uniBufInfo({}, sizeof(glm::mat4), vk::BufferUsageFlagBits::eUniformBuffer, vk::SharingMode::eExclusive, family_queue_index, nullptr);
-	auto mvp_uniform_buffer = device.createBuffer(uniBufInfo, nullptr);
-	
-	// allocate
-	vk::MemoryAllocateInfo uniAllocInfo(device.getBufferMemoryRequirements(mvp_uniform_buffer).size(), 2);
-	auto uniform_memory = device.allocateMemory(uniAllocInfo, nullptr);
-	
-	device.bindBufferMemory(mvp_uniform_buffer, uniform_memory, 0);
-	
-	// write
-	auto uniBufferData = device.mapMemory(uniform_memory, 0, VK_WHOLE_SIZE, {});
-	
-	glm::mat4 model;
-	glm::mat4 view = glm::lookAt(glm::vec3(-3, -4, 2), glm::vec3(0, 0, 0), glm::vec3(0.f, 0.f, 1.f));
-	glm::mat4 projection = glm::perspective(glm::radians(30.f), 1280.f/720.f, 0.f, 100.f);
-	
-	glm::mat4 MVP = projection * view * model;
-	
-	
-	memcpy(uniBufferData, &MVP, sizeof(MVP));
-	
-	device.unmapMemory(uniform_memory);
-	
+	// setup and write to all buffers
+	/////////////////////////////
+	{
+		
+		// associate the buffer to the allocated space. Otherwise, these will just be two independent objects that know nothing of each other
+		device.bindBufferMemory(
+			vertex_buffer, 	// the buffer object
+			device_memory, 	// the allocated memory
+			0				// the offset--this buffer uses the beginning of the allocated memory
+		);
+		device.bindBufferMemory(
+			index_buffer, 												// the buffer object
+			device_memory, 												// the allocated memory
+			device.getBufferMemoryRequirements(vertex_buffer).size()	// the offset--vertex_buffer uses the first bit, 
+																		// 		we will use the second bit for the index buffer
+		);
+		device.bindBufferMemory(
+			mvp_uniform_buffer,				// the buffer object
+			device_memory,					// the allocated memory
+			device.getBufferMemoryRequirements(vertex_buffer).size() +		// offset 
+				device.getBufferMemoryRequirements(index_buffer).size()
+		);
+		
+		// write to the buffer. "map" means that every change to mapped_data updates exactly in the device.
+		auto mapped_data = device.mapMemory(device_memory, 0, VK_WHOLE_SIZE, {});
+		
+		// the vertex data
+		vert_buffer_data_t triAndColorData[] = {
+			//COLOR     		 UV
+			{{-1.f, -1.f, 0.f}, {0.f, 0.f}},
+			{{ 1.f, -1.f, 0.f}, {1.f, 0.f}},
+			{{ 0.f, 1.f,  0.f}, {.5f, 1.f}}
+		};
+		// copy it into the mapped data 
+		memcpy(mapped_data, triAndColorData, sizeof(triAndColorData));
+		
+		// the indicies
+		glm::uvec3 indicies = {0, 1, 2};
+		
+		// copy this data into the mapped data, but with the offset of the size of the vertex buffer
+		memcpy((char*)mapped_data + device.getBufferMemoryRequirements(vertex_buffer).size(), &indicies, sizeof(indicies));
+		
+		// copy in the MVP matrix
+		glm::mat4 model;
+		glm::mat4 view = glm::lookAt(glm::vec3(-3, -4, 2), glm::vec3(0, 0, 0), glm::vec3(0.f, 0.f, 1.f));
+		glm::mat4 projection = glm::perspective(glm::radians(30.f), 1280.f/720.f, 0.f, 100.f);
+		
+		glm::mat4 MVP = projection * view * model;
+		
+		// copy the data in
+		memcpy((char*)mapped_data + device.getBufferMemoryRequirements(vertex_buffer).size() + 
+				device.getBufferMemoryRequirements(index_buffer).size(), 
+			&MVP, sizeof(MVP));
+		
+		
+		// stop the mapping
+		device.unmapMemory(device_memory);
+		
+	}
 	
 	// create image
-	std::vector<unsigned char> imageData; vk::Extent3D imageExtents;
-	auto err = lodepng::decode(imageData, imageExtents.width(), imageExtents.height(), "image.png", LodePNGColorType::LCT_RGBA, 8);
-	imageExtents.depth(1);
-	assert(!err);
+	// Images are quite like buffers--no allocation is done upon creation.
+	// Space will be allocated later
+	///////////////
+	vk::Image image;
+	vk::DeviceMemory image_device_memory;
+	vk::ImageView image_view;
+	vk::Sampler sampler;
+	{
+		// load the image from a file
+		std::vector<unsigned char> image_data; 
+		vk::Extent3D image_extents;
+		{
+			auto err = lodepng::decode(image_data, image_extents.width(), image_extents.height(), "image.png", LodePNGColorType::LCT_RGBA, 8);
+			assert(!err); 
+		}
+		// this is default to 0, but we need 1 for a 2D image
+		image_extents.depth(1);
+		
+		// create the image
+		{
+			// image creation metadata
+			vk::ImageCreateInfo image_info(
+				{}, 								// reserved flags
+				vk::ImageType::e2D, 				// the image is 2D
+				vk::Format::eR8G8B8A8Unorm, 		// the format for the image. This lists the components
+				image_extents, 						// the size of the image--make sure the depth is 1 and not 0
+				1,									// how many mip levels the image has. In a production environment you would want to have mipmaps 
+				1,									// how many layers TODO: document 
+				vk::SampleCountFlagBits::e1,		// how many samples the image should have TODO: document
+				vk::ImageTiling::eLinear,			// how the image should tiled
+				vk::ImageUsageFlagBits::eSampled,	// usage: we will be sampling it in a shader
+				vk::SharingMode::eExclusive,		// no sharing
+				1, 									// the count of queue families
+				&family_queue_index, 				// a pointer to the queue families TODO document
+				vk::ImageLayout::ePreinitialized	// TODO: not sure at all
+			);
+			// create the image
+			image = device.createImage(
+				image_info, 	// the image metadta
+				nullptr			// allocator--default is fine
+			);
+		}
+		
+		// allocate & write memory for the image
+		{
+			// allocation metadata
+			vk::MemoryAllocateInfo imageAllocInfo(
+				device.getImageMemoryRequirements(image).size(), 	// allocation size
+				2													// TODO: fix and document
+			);
+			
+			
+			image_device_memory = device.allocateMemory(imageAllocInfo, nullptr);
+			
+			// associate the allocated memory and the image
+			device.bindImageMemory(image, image_device_memory, 0);
+			
+			// map memory
+			auto mapped_data = device.mapMemory(image_device_memory, 0, VK_WHOLE_SIZE, {});
+			
+			// copy data in
+			memcpy(mapped_data, &image_data[0], image_data.size());
+			
+			device.unmapMemory(image_device_memory);
+		
+		}
+		// make an image view
+		{
+			vk::ImageViewCreateInfo imageViewInfo(
+				{}, 									// Reserved flags
+				image, 									// the image to create a view for
+				vk::ImageViewType::e2D, 				// the image type
+				vk::Format::eR8G8B8A8Unorm, 			// the data type
+				vk::ComponentMapping(					// the component mapping--our data is already in order, so we don't need to reorder
+					vk::ComponentSwizzle::eR, 	
+					vk::ComponentSwizzle::eG,
+					vk::ComponentSwizzle::eB,
+					vk::ComponentSwizzle::eA),
+				vk::ImageSubresourceRange(				// TODO: document
+					vk::ImageAspectFlagBits::eColor,
+					0,
+					1,
+					0, 
+					1
+				)
+			);
+			image_view = device.createImageView(
+				imageViewInfo, 
+				nullptr			// allocator--default is fine
+			);
+		}
+		
+		// create a sampler
+		// This just defines how the image will be viewed TODO: factcheck
+		{
+			vk::SamplerCreateInfo samplerInfo(
+				{}, 									// Reserved flags
+				vk::Filter::eNearest, 					// the magnification filter
+				vk::Filter::eNearest, 					// the minification filter
+				vk::SamplerMipmapMode::eNearest,		// the mipmap mode 
+				vk::SamplerAddressMode::eClampToEdge, 	// what happens when UVs are outside [0, 1]?
+				vk::SamplerAddressMode::eClampToEdge,
+				vk::SamplerAddressMode::eClampToEdge,
+				0.f,									// TODO: miploadBias
+				VK_TRUE, 								// enable antistrophy
+				3.f, 									// maxiumum antistrophy
+				VK_FALSE, 								// TODO: compareenable
+				vk::CompareOp::eNever, 					// compareOp, doesn't matter in this case; it is disabled
+				0.f,									// min LOD TODO
+				0.f,									// max LOD TODO
+				vk::BorderColor::eFloatOpaqueWhite, 	// border color TODO??
+				VK_FALSE								// unnormalizedCordinates TODO
+			);
+			sampler = device.createSampler(samplerInfo, nullptr);
+		}
+		
+	}
 	
-	vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, vk::Format::eR8G8B8A8Unorm, imageExtents, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eLinear, vk::ImageUsageFlagBits::eSampled, vk::SharingMode::eExclusive, family_queue_index, nullptr, vk::ImageLayout::ePreinitialized);
-	auto image = device.createImage(imageInfo, nullptr);
-	
-	std::cout << "Image Size: " << imageExtents.width() << " x " << imageExtents.height() << " x " << imageExtents.depth() << " Requested size: " << device.getImageMemoryRequirements(image).size() << " Buffer size: " << imageData.size() << std::endl;
-	
-	
-	vk::MemoryAllocateInfo imageAllocInfo(device.getImageMemoryRequirements(image).size(), 2);
-	auto imageBuffer = device.allocateMemory(imageAllocInfo, nullptr);
-	
-	
-	device.bindImageMemory(image, imageBuffer, 0);
-	
- 	auto imageBufferData = device.mapMemory(imageBuffer, 0, VK_WHOLE_SIZE, {});
-	
-	memcpy(imageBufferData, &imageData[0], imageData.size());
-	//memset(imageBufferData, ~0, imageData.size());
-	
-	device.unmapMemory(imageBuffer);
-	
-	// make a sampler
-	vk::SamplerCreateInfo samplerInfo({}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, 0.f, VK_FALSE, 0.f, VK_FALSE, vk::CompareOp::eNever, 0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite, VK_FALSE);
-	auto sampler = device.createSampler(samplerInfo, nullptr);
-	
-	// make an image view
-	vk::ImageViewCreateInfo imageViewInfo({}, image, vk::ImageViewType::e2D, vk::Format::eR8G8B8A8Unorm, vk::ComponentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG, vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA), vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1));
-	auto image_view = device.createImageView(imageViewInfo, nullptr);
-	
-	// upload shaders
-	std::ifstream fragFile("frag.spv", std::ios::binary | std::ios::ate);
-	std::streamsize fragSize = fragFile.tellg();
-	fragFile.seekg(0, std::ios::beg);
-	std::vector<char> fragSpirVData(fragSize);
-	fragFile.read(fragSpirVData.data(), fragSize);
-	
-	
-	std::ifstream vertFile("vert.spv", std::ios::binary | std::ios::ate);
-	std::streamsize vertSize = vertFile.tellg();
-	vertFile.seekg(0, std::ios::beg);
-	std::vector<char> vertSpirVData(vertSize);
-	vertFile.read(vertSpirVData.data(), vertSize);
-	
-	vk::ShaderModuleCreateInfo vertModuleInfo({}, vertSpirVData.size(), reinterpret_cast<const uint32_t*>(vertSpirVData.data()));
-	vk::ShaderModuleCreateInfo fragModuleInfo({}, fragSpirVData.size(), reinterpret_cast<const uint32_t*>(fragSpirVData.data()));
-	
-	auto vert_module = device.createShaderModule(vertModuleInfo, nullptr);
-	auto frag_module = device.createShaderModule(fragModuleInfo, nullptr);
-	
+	// Create shader modules
+	// These are loaded from the disk in spir-V form
+	////////////////////////
+	vk::ShaderModule vert_module, frag_module;
+	{
+		// upload shaders
+		std::ifstream fragFile("frag.spv", std::ios::binary | std::ios::ate);
+		std::streamsize fragSize = fragFile.tellg();
+		fragFile.seekg(0, std::ios::beg);
+		std::vector<char> fragSpirVData(fragSize);
+		fragFile.read(fragSpirVData.data(), fragSize);
+		
+		
+		std::ifstream vertFile("vert.spv", std::ios::binary | std::ios::ate);
+		std::streamsize vertSize = vertFile.tellg();
+		vertFile.seekg(0, std::ios::beg);
+		std::vector<char> vertSpirVData(vertSize);
+		vertFile.read(vertSpirVData.data(), vertSize);
+		
+		vk::ShaderModuleCreateInfo vertModuleInfo({}, vertSpirVData.size(), reinterpret_cast<const uint32_t*>(vertSpirVData.data()));
+		vk::ShaderModuleCreateInfo fragModuleInfo({}, fragSpirVData.size(), reinterpret_cast<const uint32_t*>(fragSpirVData.data()));
+		
+		vert_module = device.createShaderModule(vertModuleInfo, nullptr);
+		frag_module = device.createShaderModule(fragModuleInfo, nullptr);
+	}
+
 	
 	// make descriptor set layout
 	vk::DescriptorSetLayoutBinding bindings[] = {
