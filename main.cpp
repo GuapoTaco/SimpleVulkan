@@ -26,9 +26,9 @@ vk::Instance create_instance()
 {
 	vk::ApplicationInfo appInfo("Test app", 0, "Engine", 0, VK_MAKE_VERSION(1, 0, 0));
 	
-	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_KHR_surface", "VK_KHR_swapchain" };
-	const char* layerNames[] = { "VK_LAYER_LUNARG_standard_validation"};
-	vk::InstanceCreateInfo instInfo({}, &appInfo, 1, layerNames, 3, extensionNames); 
+	const char* extensionNames[] = { "VK_KHR_xcb_surface", "VK_EXT_debug_report", "VK_KHR_surface" };
+	const char* layernames[] = { "VK_LAYER_LUNARG_standard_validation" };
+	vk::InstanceCreateInfo instInfo({}, &appInfo, 1, layernames, 3, extensionNames); 
 	
 	return vk::createInstance(instInfo, nullptr);
 }
@@ -317,14 +317,15 @@ int main()
 	// make descriptor set layout
 	vk::DescriptorSetLayoutBinding bindings[] = {
 		{0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr},
-		{1, vk::DescriptorType::eSampledImage, 1, vk::ShaderStageFlagBits::eVertex, nullptr}
+		{1, vk::DescriptorType::eSampledImage, 1, vk::ShaderStageFlagBits::eFragment, nullptr}
 	};
  	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 2, bindings);
 	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, nullptr);
 	
 	// make descriptor set pool
 	vk::DescriptorPoolSize descPoolSizes[] = {
-		{vk::DescriptorType::eUniformBuffer, 1}
+		{vk::DescriptorType::eUniformBuffer, 1},
+		{vk::DescriptorType::eSampledImage, 1}
 	};
 	vk::DescriptorPoolCreateInfo descPoolInfo({}, 1, 2, descPoolSizes);
 	auto descriptor_pool = device.createDescriptorPool(descPoolInfo, nullptr);
