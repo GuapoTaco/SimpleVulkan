@@ -213,17 +213,20 @@ int main()
 	vk::BufferCreateInfo buffInfo({}, sizeof(vert_buffer_data_t) * 3, vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive, family_queue_index, nullptr); // TODO: not sure
 	auto vertex_buffer = device.createBuffer(buffInfo, nullptr);
 	
-	auto mem_reqs = device.getBufferMemoryRequirements(vertex_buffer);
+	// add index buffer
+	vk::BufferCreateInfo indexBuffInfo({}, sizeof(glm::uvec3), vk::BufferUsageFlagBits::eIndexBuffer, vk::SharingMode::eExclusive, family_queue_index, nullptr);
+	auto index_buffer = device.createBuffer(indexBuffInfo, nullptr);
 	
-	// allocate for the buffer
-	vk::MemoryAllocateInfo memAllocInfo(mem_reqs.size(), 2); 
+	// allocate for the vertex buffer and the index buffer
+	vk::MemoryAllocateInfo memAllocInfo(device.getBufferMemoryRequirements(vertex_buffer).size() + device.getBufferMemoryRequirements(index_buffer).size(), 2); 
 	auto device_memory = device.allocateMemory(memAllocInfo, nullptr);
 	
 	// associate the buffer to the allocated space
 	device.bindBufferMemory(vertex_buffer, device_memory, 0);
+	device.bindBufferMemory(index_buffer, device_memory, device.getBufferMemoryRequirements(vertex_buffer).size());
 	
 	// write to the buffer
-	auto bufferData = device.mapMemory(device_memory, 0, sizeof(vert_buffer_data_t) * 3, {});
+	auto bufferData = device.mapMemory(device_memory, 0, VK_WHOLE_SIZE, {});
 	
 	vert_buffer_data_t triAndColorData[] = {//COLOR      UV
 		{{-1.f, -1.f, 0.f}, {0.f, 0.f}},
@@ -231,6 +234,10 @@ int main()
 		{{ 0.f, 1.f,  0.f}, {.5f, 1.f}}
 	};
 	memcpy(bufferData, triAndColorData, sizeof(triAndColorData));
+	
+	// copy the index buffer
+	glm::uvec3 indicies = {0, 1, 2};
+	memcpy((char*)bufferData + device.getBufferMemoryRequirements(vertex_buffer).size(), &indicies, sizeof(indicies));
 	
 	device.unmapMemory(device_memory);
 	
@@ -249,8 +256,8 @@ int main()
 	auto uniBufferData = device.mapMemory(uniform_memory, 0, VK_WHOLE_SIZE, {});
 	
 	glm::mat4 model;
-	glm::mat4 view = glm::lookAt(glm::vec3(3, 4, 2), glm::vec3(0, 0, 0), glm::vec3(0.f, 0.f, 1.f));
-	glm::mat4 projection = glm::perspective(glm::radians(60.f), 1280.f/720.f, 0.f, 100.f);
+	glm::mat4 view = glm::lookAt(glm::vec3(-3, -4, 2), glm::vec3(0, 0, 0), glm::vec3(0.f, 0.f, 1.f));
+	glm::mat4 projection = glm::perspective(glm::radians(30.f), 1280.f/720.f, 0.f, 100.f);
 	
 	glm::mat4 MVP = projection * view * model;
 	
@@ -259,6 +266,39 @@ int main()
 	
 	device.unmapMemory(uniform_memory);
 	
+	
+	// create image
+	std::vector<unsigned char> imageData; vk::Extent3D imageExtents;
+	auto err = lodepng::decode(imageData, imageExtents.width(), imageExtents.height(), "image.png", LodePNGColorType::LCT_RGBA, 8);
+	imageExtents.depth(1);
+	assert(!err);
+	
+	vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, vk::Format::eR8G8B8A8Unorm, imageExtents, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eLinear, vk::ImageUsageFlagBits::eSampled, vk::SharingMode::eExclusive, family_queue_index, nullptr, vk::ImageLayout::ePreinitialized);
+	auto image = device.createImage(imageInfo, nullptr);
+	
+	std::cout << "Image Size: " << imageExtents.width() << " x " << imageExtents.height() << " x " << imageExtents.depth() << " Requested size: " << device.getImageMemoryRequirements(image).size() << " Buffer size: " << imageData.size() << std::endl;
+	
+	
+	vk::MemoryAllocateInfo imageAllocInfo(device.getImageMemoryRequirements(image).size(), 2);
+	auto imageBuffer = device.allocateMemory(imageAllocInfo, nullptr);
+	
+	
+	device.bindImageMemory(image, imageBuffer, 0);
+	
+ 	auto imageBufferData = device.mapMemory(imageBuffer, 0, VK_WHOLE_SIZE, {});
+	
+	memcpy(imageBufferData, &imageData[0], imageData.size());
+	//memset(imageBufferData, ~0, imageData.size());
+	
+	device.unmapMemory(imageBuffer);
+	
+	// make a sampler
+	vk::SamplerCreateInfo samplerInfo({}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, 0.f, VK_FALSE, 0.f, VK_FALSE, vk::CompareOp::eNever, 0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite, VK_FALSE);
+	auto sampler = device.createSampler(samplerInfo, nullptr);
+	
+	// make an image view
+	vk::ImageViewCreateInfo imageViewInfo({}, image, vk::ImageViewType::e2D, vk::Format::eR8G8B8A8Unorm, vk::ComponentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG, vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA), vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1));
+	auto image_view = device.createImageView(imageViewInfo, nullptr);
 	
 	// upload shaders
 	std::ifstream fragFile("frag.spv", std::ios::binary | std::ios::ate);
@@ -284,7 +324,7 @@ int main()
 	// make descriptor set layout
 	vk::DescriptorSetLayoutBinding bindings[] = {
 		{0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr},
-		{1, vk::DescriptorType::eSampledImage, 1, vk::ShaderStageFlagBits::eFragment, nullptr}
+		{1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr}
 	};
  	vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo({}, 2, bindings);
 	auto descriptor_set_layout = device.createDescriptorSetLayout(descSetLayoutCreateInfo, nullptr);
@@ -292,7 +332,7 @@ int main()
 	// make descriptor set pool
 	vk::DescriptorPoolSize descPoolSizes[] = {
 		{vk::DescriptorType::eUniformBuffer, 1},
-		{vk::DescriptorType::eSampledImage, 1}
+		{vk::DescriptorType::eCombinedImageSampler, 1}
 	};
 	vk::DescriptorPoolCreateInfo descPoolInfo({}, 1, 2, descPoolSizes);
 	auto descriptor_pool = device.createDescriptorPool(descPoolInfo, nullptr);
@@ -305,7 +345,9 @@ int main()
 	vk::DescriptorBufferInfo descBufferInfo(mvp_uniform_buffer, 0, sizeof(glm::mat4));
 	vk::WriteDescriptorSet writeDescSet(descriptor_set, 0, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &descBufferInfo, nullptr);
 	
-	device.updateDescriptorSets({writeDescSet}, {});
+	vk::DescriptorImageInfo descImageInfo(sampler, image_view, vk::ImageLayout::eGeneral);
+	vk::WriteDescriptorSet imageWriteDescSet(descriptor_set, 1, 0, 1, vk::DescriptorType::eCombinedImageSampler, &descImageInfo, nullptr, nullptr);
+	device.updateDescriptorSets({writeDescSet, imageWriteDescSet}, {});
 	
 	
 	
@@ -317,8 +359,8 @@ int main()
 	
 	// make render pass
 	vk::AttachmentDescription attachDesc({}, vk::Format::eR32G32B32A32Sfloat, vk::SampleCountFlagBits::e1, 
-										 vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
-									  vk::AttachmentStoreOp::eDontCare, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+		vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
+		vk::AttachmentStoreOp::eDontCare, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 	vk::AttachmentReference colorAttachments(0, vk::ImageLayout::eColorAttachmentOptimal);
 	vk::AttachmentReference depthRef(VK_ATTACHMENT_UNUSED, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 	vk::SubpassDescription subpassDesc({}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 1, &colorAttachments, nullptr, &depthRef, 0, nullptr);
@@ -425,7 +467,7 @@ int main()
 	renderCommandBuffer.begin(vk::CommandBufferBeginInfo({}, nullptr));
 	{
 		// clear color on the screen
-		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 1.f, 1.f, 0.f, 1.f }})); 
+		vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>{{ 0.f, 0.f, 0.f, 1.f }})); 
 		
 		// start the render pass
 		vk::RenderPassBeginInfo renderPassBeginInfo(render_pass, framebuffers[nextSwapImage], vk::Rect2D({0, 0}, { 1280, 720 }), 1, &clearColor);
@@ -448,9 +490,10 @@ int main()
 		// bind buffer -- this binds both the location and UV
 		renderCommandBuffer.bindVertexBuffers(0, {vertex_buffer, vertex_buffer}, {0, 0});
 		
+		renderCommandBuffer.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
+		
 		// DRAW!!!
-		renderCommandBuffer.draw(3, 1, 0, 0);
-	
+		renderCommandBuffer.drawIndexed(3, 1, 0, 0, 0);
 		
 		renderCommandBuffer.endRenderPass();
 		
